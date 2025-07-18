@@ -2,6 +2,10 @@
 // Database service layer with view integration, error handling, and retry mechanisms
 
 import { toast } from '@/lib/toast';
+import { supabase } from '@/lib/supabase';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '@/types/supabase';
+import { realtimeManager, type SubscriptionCallback } from '@/lib/realtime';
 
 // Database view interfaces
 export interface BatchYieldView {
@@ -61,7 +65,12 @@ export enum DatabaseErrorType {
   QUERY_ERROR = 'query_error',
   TIMEOUT_ERROR = 'timeout_error',
   VALIDATION_ERROR = 'validation_error',
-  PERMISSION_ERROR = 'permission_error'
+  PERMISSION_ERROR = 'permission_error',
+  AUTHENTICATION_ERROR = 'authentication_error',
+  RATE_LIMIT_ERROR = 'rate_limit_error',
+  CONSTRAINT_ERROR = 'constraint_error',
+  RLS_ERROR = 'rls_error',
+  SUPABASE_ERROR = 'supabase_error'
 }
 
 export class DatabaseError extends Error {
@@ -89,112 +98,98 @@ const DEFAULT_CONFIG: DatabaseConfig = {
   timeout: 10000
 };
 
-// Mock database connection (replace with actual Supabase client)
-class MockDatabaseClient {
-  private isConnected = true;
-  private simulateError = false;
+// Supabase database client wrapper
+class SupabaseDatabaseClient {
+  private client: SupabaseClient<Database>;
+
+  constructor() {
+    this.client = supabase;
+  }
 
   async query<T>(sql: string, params?: any[]): Promise<T[]> {
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, Math.random() * 100));
+    // Use Supabase RPC for custom SQL queries
+    const { data, error } = await this.client.rpc('execute_sql', {
+      query: sql,
+      params: params || []
+    });
 
-    if (!this.isConnected) {
-      throw new Error('Database connection lost');
+    if (error) {
+      throw new Error(`Query execution failed: ${error.message}`);
     }
 
-    if (this.simulateError) {
-      throw new Error('Query execution failed');
+    return data as T[];
+  }
+
+  // Direct table access methods for better performance
+  async selectFromView<T>(viewName: string, filters?: Record<string, any>, orderBy?: string): Promise<T[]> {
+    let query = this.client.from(viewName).select('*');
+
+    // Apply filters
+    if (filters) {
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          query = query.eq(key, value);
+        }
+      });
     }
 
-    // Mock data based on query type
-    if (sql.includes('vw_batch_yield')) {
-      return this.getMockBatchYield() as T[];
-    } else if (sql.includes('vw_invoice_aging')) {
-      return this.getMockInvoiceAging() as T[];
-    } else if (sql.includes('vw_customer_metrics')) {
-      return this.getMockCustomerMetrics() as T[];
+    // Apply ordering
+    if (orderBy) {
+      const [column, direction] = orderBy.split(' ');
+      query = query.order(column, { ascending: direction !== 'DESC' });
     }
 
-    return [];
+    const { data, error } = await query;
+
+    if (error) {
+      throw new Error(`View query failed: ${error.message}`);
+    }
+
+    return (data as T[]) || [];
   }
 
-  private getMockBatchYield(): BatchYieldView[] {
-    return [
-      {
-        batch_id: '1',
-        batch_number: 'GR-20241220-001',
-        total_input_cost: 11250.00,
-        output_litres: 25.5,
-        cost_per_litre: 441.18,
-        yield_percentage: 85.0,
-        production_date: '2024-12-20T00:00:00Z',
-        status: 'approved',
-        material_breakdown: [
-          {
-            material_name: 'Cream Butter',
-            quantity_used: 25,
-            cost_per_unit: 450.00,
-            total_cost: 11250.00,
-            lot_number: 'CB-2024-001'
-          }
-        ]
-      }
-    ];
+  // Range query for date-based filtering
+  async selectFromViewWithDateRange<T>(
+    viewName: string, 
+    dateColumn: string,
+    startDate: string, 
+    endDate: string,
+    orderBy?: string
+  ): Promise<T[]> {
+    let query = this.client
+      .from(viewName)
+      .select('*')
+      .gte(dateColumn, startDate)
+      .lte(dateColumn, endDate);
+
+    if (orderBy) {
+      const [column, direction] = orderBy.split(' ');
+      query = query.order(column, { ascending: direction !== 'DESC' });
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw new Error(`Date range query failed: ${error.message}`);
+    }
+
+    return (data as T[]) || [];
   }
 
-  private getMockInvoiceAging(): InvoiceAgingView[] {
-    return [
-      {
-        invoice_id: '1',
-        customer_name: 'Raj Foods & Restaurant',
-        customer_id: '1',
-        invoice_number: 'INV-2024-001',
-        issue_date: '2024-12-20T00:00:00Z',
-        due_date: '2025-01-19T00:00:00Z',
-        total_amount: 5830,
-        paid_amount: 0,
-        outstanding_amount: 5830,
-        days_overdue: 0,
-        aging_bucket: 'current',
-        status: 'sent',
-        order_number: 'GR-2024-0001'
-      }
-    ];
-  }
-
-  private getMockCustomerMetrics(): CustomerMetricsView[] {
-    return [
-      {
-        customer_id: '1',
-        customer_name: 'Raj Foods & Restaurant',
-        tier: 'wholesale',
-        channel: 'direct',
-        city: 'New Delhi',
-        total_orders: 1,
-        total_revenue: 5830,
-        ltv: 5830,
-        aov: 5830,
-        last_order_date: '2024-12-20T00:00:00Z',
-        first_order_date: '2024-12-20T00:00:00Z',
-        avg_days_between_orders: null,
-        predicted_reorder_date: null,
-        activity_status: 'active'
-      }
-    ];
-  }
-
-  setConnectionStatus(connected: boolean) {
-    this.isConnected = connected;
-  }
-
-  setErrorSimulation(simulate: boolean) {
-    this.simulateError = simulate;
+  // Connection validation
+  async validateConnection(): Promise<boolean> {
+    try {
+      const { error } = await this.client.from('user_profiles').select('id').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
   }
 }
 
 // Database service class
 export class DatabaseService {
-  private static client = new MockDatabaseClient();
+  private static client = new SupabaseDatabaseClient();
   private static config = DEFAULT_CONFIG;
 
   // Utility method to execute operations with retry logic
@@ -234,35 +229,84 @@ export class DatabaseService {
     throw this.handleError(lastError!, operationName);
   }
 
-  // Error handling with user-friendly messages
+  // Enhanced error handling for Supabase-specific errors
   private static handleError(error: Error, operationName: string): DatabaseError {
     let errorType: DatabaseErrorType;
     let userMessage: string;
     let retryable = false;
 
-    if (error.message.includes('connection') || error.message.includes('network')) {
-      errorType = DatabaseErrorType.CONNECTION_ERROR;
-      userMessage = 'Unable to connect to database. Please check your internet connection.';
-      retryable = true;
-    } else if (error.message.includes('timeout')) {
-      errorType = DatabaseErrorType.TIMEOUT_ERROR;
-      userMessage = 'Database operation timed out. Please try again.';
-      retryable = true;
-    } else if (error.message.includes('permission') || error.message.includes('unauthorized')) {
+    // Check if it's a Supabase error with additional context
+    const errorMessage = error.message.toLowerCase();
+    const errorDetails = (error as any).details || '';
+    const errorCode = (error as any).code || '';
+    const errorHint = (error as any).hint || '';
+
+    // Supabase-specific error handling
+    if (errorCode === 'PGRST301' || errorMessage.includes('jwt')) {
+      errorType = DatabaseErrorType.AUTHENTICATION_ERROR;
+      userMessage = 'Authentication expired. Please log in again.';
+      retryable = false;
+    } else if (errorCode === 'PGRST116' || errorMessage.includes('rls') || errorMessage.includes('row level security')) {
+      errorType = DatabaseErrorType.RLS_ERROR;
+      userMessage = 'Access denied. You do not have permission to access this data.';
+      retryable = false;
+    } else if (errorCode === '23505' || errorMessage.includes('duplicate key') || errorMessage.includes('unique constraint')) {
+      errorType = DatabaseErrorType.CONSTRAINT_ERROR;
+      userMessage = 'This record already exists. Please check your data and try again.';
+      retryable = false;
+    } else if (errorCode === '23503' || errorMessage.includes('foreign key constraint')) {
+      errorType = DatabaseErrorType.CONSTRAINT_ERROR;
+      userMessage = 'Cannot complete operation due to related data constraints.';
+      retryable = false;
+    } else if (errorCode === '23502' || errorMessage.includes('not null constraint')) {
+      errorType = DatabaseErrorType.VALIDATION_ERROR;
+      userMessage = 'Required fields are missing. Please fill in all required information.';
+      retryable = false;
+    } else if (errorCode === '42501' || errorMessage.includes('insufficient privilege')) {
       errorType = DatabaseErrorType.PERMISSION_ERROR;
       userMessage = 'You do not have permission to perform this operation.';
       retryable = false;
-    } else if (error.message.includes('validation') || error.message.includes('constraint')) {
+    } else if (errorMessage.includes('rate limit') || errorCode === '429') {
+      errorType = DatabaseErrorType.RATE_LIMIT_ERROR;
+      userMessage = 'Too many requests. Please wait a moment and try again.';
+      retryable = true;
+    } else if (errorMessage.includes('connection') || errorMessage.includes('network') || errorMessage.includes('fetch')) {
+      errorType = DatabaseErrorType.CONNECTION_ERROR;
+      userMessage = 'Unable to connect to database. Please check your internet connection.';
+      retryable = true;
+    } else if (errorMessage.includes('timeout') || errorCode === 'ETIMEDOUT') {
+      errorType = DatabaseErrorType.TIMEOUT_ERROR;
+      userMessage = 'Database operation timed out. Please try again.';
+      retryable = true;
+    } else if (errorMessage.includes('permission') || errorMessage.includes('unauthorized')) {
+      errorType = DatabaseErrorType.PERMISSION_ERROR;
+      userMessage = 'You do not have permission to perform this operation.';
+      retryable = false;
+    } else if (errorMessage.includes('validation') || errorMessage.includes('constraint')) {
       errorType = DatabaseErrorType.VALIDATION_ERROR;
       userMessage = 'Invalid data provided. Please check your input.';
       retryable = false;
+    } else if (errorMessage.includes('supabase') || errorCode.startsWith('PGRST')) {
+      errorType = DatabaseErrorType.SUPABASE_ERROR;
+      userMessage = `Database service error during ${operationName}. Please try again.`;
+      retryable = true;
     } else {
       errorType = DatabaseErrorType.QUERY_ERROR;
       userMessage = `Database error occurred during ${operationName}. Please try again.`;
       retryable = true;
     }
 
-    // Show toast notification
+    // Log detailed error information for debugging
+    console.error(`Database Error [${errorType}]:`, {
+      operation: operationName,
+      message: error.message,
+      code: errorCode,
+      details: errorDetails,
+      hint: errorHint,
+      retryable
+    });
+
+    // Show user-friendly toast notification
     toast.error(userMessage);
 
     return new DatabaseError(errorType, userMessage, error, retryable);
@@ -271,11 +315,10 @@ export class DatabaseService {
   // Database connection validation
   static async validateConnection(): Promise<boolean> {
     try {
-      await this.executeWithRetry(
-        () => this.client.query('SELECT 1'),
+      return await this.executeWithRetry(
+        () => this.client.validateConnection(),
         'connection validation'
       );
-      return true;
     } catch (error) {
       console.error('Database connection validation failed:', error);
       return false;
@@ -285,12 +328,8 @@ export class DatabaseService {
   // Batch yield view queries
   static async getBatchYield(batchId?: string): Promise<BatchYieldView[]> {
     return this.executeWithRetry(async () => {
-      const sql = batchId 
-        ? 'SELECT * FROM vw_batch_yield WHERE batch_id = $1'
-        : 'SELECT * FROM vw_batch_yield ORDER BY production_date DESC';
-      
-      const params = batchId ? [batchId] : [];
-      return this.client.query<BatchYieldView>(sql, params);
+      const filters = batchId ? { batch_id: batchId } : undefined;
+      return this.client.selectFromView<BatchYieldView>('vw_batch_yield', filters, 'production_date DESC');
     }, 'batch yield query');
   }
 
@@ -299,24 +338,21 @@ export class DatabaseService {
     endDate: string
   ): Promise<BatchYieldView[]> {
     return this.executeWithRetry(async () => {
-      const sql = `
-        SELECT * FROM vw_batch_yield 
-        WHERE production_date BETWEEN $1 AND $2 
-        ORDER BY production_date DESC
-      `;
-      return this.client.query<BatchYieldView>(sql, [startDate, endDate]);
+      return this.client.selectFromViewWithDateRange<BatchYieldView>(
+        'vw_batch_yield', 
+        'production_date',
+        startDate, 
+        endDate, 
+        'production_date DESC'
+      );
     }, 'batch yield date range query');
   }
 
   // Invoice aging view queries
   static async getInvoiceAging(customerId?: string): Promise<InvoiceAgingView[]> {
     return this.executeWithRetry(async () => {
-      const sql = customerId
-        ? 'SELECT * FROM vw_invoice_aging WHERE customer_id = $1 ORDER BY days_overdue DESC'
-        : 'SELECT * FROM vw_invoice_aging ORDER BY days_overdue DESC';
-      
-      const params = customerId ? [customerId] : [];
-      return this.client.query<InvoiceAgingView>(sql, params);
+      const filters = customerId ? { customer_id: customerId } : undefined;
+      return this.client.selectFromView<InvoiceAgingView>('vw_invoice_aging', filters, 'days_overdue DESC');
     }, 'invoice aging query');
   }
 
@@ -324,8 +360,8 @@ export class DatabaseService {
     agingBucket: 'current' | '0-30' | '31-60' | '61-90' | '90+'
   ): Promise<InvoiceAgingView[]> {
     return this.executeWithRetry(async () => {
-      const sql = 'SELECT * FROM vw_invoice_aging WHERE aging_bucket = $1 ORDER BY outstanding_amount DESC';
-      return this.client.query<InvoiceAgingView>(sql, [agingBucket]);
+      const filters = { aging_bucket: agingBucket };
+      return this.client.selectFromView<InvoiceAgingView>('vw_invoice_aging', filters, 'outstanding_amount DESC');
     }, 'invoice aging bucket query');
   }
 
@@ -335,7 +371,7 @@ export class DatabaseService {
     agingBreakdown: Record<string, number>;
   }> {
     return this.executeWithRetry(async () => {
-      const data = await this.client.query<InvoiceAgingView>('SELECT * FROM vw_invoice_aging');
+      const data = await this.client.selectFromView<InvoiceAgingView>('vw_invoice_aging');
       
       const summary = {
         totalOutstanding: data.reduce((sum, invoice) => sum + invoice.outstanding_amount, 0),
@@ -353,12 +389,8 @@ export class DatabaseService {
   // Customer metrics view queries
   static async getCustomerMetrics(customerId?: string): Promise<CustomerMetricsView[]> {
     return this.executeWithRetry(async () => {
-      const sql = customerId
-        ? 'SELECT * FROM vw_customer_metrics WHERE customer_id = $1'
-        : 'SELECT * FROM vw_customer_metrics ORDER BY ltv DESC';
-      
-      const params = customerId ? [customerId] : [];
-      return this.client.query<CustomerMetricsView>(sql, params);
+      const filters = customerId ? { customer_id: customerId } : undefined;
+      return this.client.selectFromView<CustomerMetricsView>('vw_customer_metrics', filters, 'ltv DESC');
     }, 'customer metrics query');
   }
 
@@ -366,13 +398,14 @@ export class DatabaseService {
     activityStatus: 'active' | 'at_risk' | 'inactive'
   ): Promise<CustomerMetricsView[]> {
     return this.executeWithRetry(async () => {
-      const sql = 'SELECT * FROM vw_customer_metrics WHERE activity_status = $1 ORDER BY last_order_date DESC';
-      return this.client.query<CustomerMetricsView>(sql, [activityStatus]);
+      const filters = { activity_status: activityStatus };
+      return this.client.selectFromView<CustomerMetricsView>('vw_customer_metrics', filters, 'last_order_date DESC');
     }, 'customer metrics activity query');
   }
 
   static async getReorderPredictions(): Promise<CustomerMetricsView[]> {
     return this.executeWithRetry(async () => {
+      // For complex queries like this, we'll still use the RPC method
       const sql = `
         SELECT * FROM vw_customer_metrics 
         WHERE predicted_reorder_date IS NOT NULL 
@@ -393,11 +426,89 @@ export class DatabaseService {
   }
 
   // Testing utilities (for development/testing)
+  // Note: These methods are no longer applicable with Supabase client
+  // Connection status and error simulation should be handled at the Supabase level
   static setConnectionStatus(connected: boolean) {
-    this.client.setConnectionStatus(connected);
+    console.warn('setConnectionStatus is deprecated with Supabase client');
   }
 
   static setErrorSimulation(simulate: boolean) {
-    this.client.setErrorSimulation(simulate);
+    console.warn('setErrorSimulation is deprecated with Supabase client');
+  }
+
+  // Real-time subscription methods
+  static subscribeToOrderChanges(callback: SubscriptionCallback): string {
+    return realtimeManager.subscribe({
+      table: 'orders',
+      events: ['INSERT', 'UPDATE'],
+      callback: (payload) => {
+        console.log('Order change detected:', payload);
+        callback(payload);
+      }
+    });
+  }
+
+  static subscribeToProductionBatchChanges(callback: SubscriptionCallback): string {
+    return realtimeManager.subscribe({
+      table: 'production_batches',
+      events: ['INSERT', 'UPDATE'],
+      callback: (payload) => {
+        console.log('Production batch change detected:', payload);
+        callback(payload);
+      }
+    });
+  }
+
+  static subscribeToInvoiceChanges(callback: SubscriptionCallback): string {
+    return realtimeManager.subscribe({
+      table: 'invoices',
+      events: ['INSERT', 'UPDATE', 'DELETE'],
+      callback: (payload) => {
+        console.log('Invoice change detected:', payload);
+        callback(payload);
+      }
+    });
+  }
+
+  static subscribeToCustomerChanges(callback: SubscriptionCallback): string {
+    return realtimeManager.subscribe({
+      table: 'customers',
+      events: ['INSERT', 'UPDATE'],
+      callback: (payload) => {
+        console.log('Customer change detected:', payload);
+        callback(payload);
+      }
+    });
+  }
+
+  static subscribeToMaterialChanges(callback: SubscriptionCallback): string {
+    return realtimeManager.subscribe({
+      table: 'materials',
+      events: ['INSERT', 'UPDATE'],
+      callback: (payload) => {
+        console.log('Material change detected:', payload);
+        callback(payload);
+      }
+    });
+  }
+
+  // Unsubscribe from real-time updates
+  static unsubscribe(subscriptionId: string): boolean {
+    return realtimeManager.unsubscribe(subscriptionId);
+  }
+
+  // Unsubscribe from all real-time updates
+  static unsubscribeAll(): void {
+    realtimeManager.unsubscribeAll();
+  }
+
+  // Get real-time connection state
+  static getRealtimeConnectionState() {
+    return realtimeManager.getConnectionState();
+  }
+
+  // Check if real-time is connected
+  static isRealtimeConnected(): boolean {
+    return realtimeManager.isConnected();
   }
 }

@@ -1,12 +1,17 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { User, UserRole, AuthorizationService } from '../Entities/User';
+import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 
 // Authentication context interface
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  register: (email: string, password: string, name?: string) => Promise<void>;
   logout: () => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
+  updatePassword: (newPassword: string) => Promise<void>;
+  updateProfile: (updates: Partial<User>) => Promise<void>;
   hasPermission: (resource: string, action: 'create' | 'read' | 'update' | 'delete', resourceData?: any) => boolean;
   hasRole: (roles: UserRole[]) => boolean;
   canOverridePrice: (originalPrice: number, newPrice: number) => boolean;
@@ -27,24 +32,38 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Initialize authentication state
+  // Initialize authentication state and set up auth state listener
   useEffect(() => {
     const initAuth = async () => {
       try {
-        if (User.isAuthenticated()) {
-          const currentUser = User.getCurrentUser();
-          if (currentUser) {
-            setUser(currentUser);
-          }
-        }
+        // Try to get current user from session
+        const currentUser = await User.me();
+        setUser(currentUser);
       } catch (error) {
-        console.error('Failed to initialize auth:', error);
+        // User not authenticated or session expired
+        console.debug('No authenticated user found:', error);
+        setUser(null);
       } finally {
         setLoading(false);
       }
     };
 
+    // Set up auth state change listener
+    const { data: { subscription } } = User.onAuthStateChange((authUser) => {
+      setUser(authUser);
+      if (!loading) {
+        // Only set loading to false after initial auth check
+        setLoading(false);
+      }
+    });
+
+    // Initialize auth state
     initAuth();
+
+    // Cleanup subscription on unmount
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   // Login function
@@ -53,6 +72,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
     try {
       const loggedInUser = await User.login(email, password);
       setUser(loggedInUser);
+    } catch (error) {
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Register function
+  const register = async (email: string, password: string, name?: string) => {
+    setLoading(true);
+    try {
+      const registeredUser = await User.register(email, password, name);
+      setUser(registeredUser);
     } catch (error) {
       throw error;
     } finally {
@@ -70,6 +102,34 @@ export function AuthProvider({ children }: AuthProviderProps) {
       console.error('Logout failed:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Reset password function
+  const resetPassword = async (email: string) => {
+    try {
+      await User.resetPassword(email);
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  // Update password function
+  const updatePassword = async (newPassword: string) => {
+    try {
+      await User.updatePassword(newPassword);
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  // Update profile function
+  const updateProfile = async (updates: Partial<User>) => {
+    try {
+      const updatedUser = await User.updateProfile(updates);
+      setUser(updatedUser);
+    } catch (error) {
+      throw error;
     }
   };
 
@@ -112,7 +172,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     user,
     loading,
     login,
+    register,
     logout,
+    resetPassword,
+    updatePassword,
+    updateProfile,
     hasPermission,
     hasRole,
     canOverridePrice,
@@ -159,7 +223,7 @@ export function ProtectedRoute({
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-500"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-500" data-testid="loading-spinner"></div>
       </div>
     );
   }

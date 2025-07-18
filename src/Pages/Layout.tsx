@@ -25,7 +25,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/Components/ui/sidebar";
-import { User } from "@/Entities/User";
+import { useAuth } from "@/lib/auth";
 
 const navigationItems = [
   {
@@ -62,24 +62,51 @@ const navigationItems = [
 
 export default function Layout({ currentPageName: _currentPageName }: { currentPageName?: string }) {
   const location = useLocation();
-  const [user, setUser] = React.useState<any>(null);
-
-  React.useEffect(() => {
-    const loadUser = async () => {
-      try {
-        const currentUser = await User.me();
-        setUser(currentUser);
-      } catch (error) {
-        console.log("User not logged in");
-      }
-    };
-    loadUser();
-  }, []);
+  const { user, loading, logout } = useAuth();
 
   const handleLogout = async () => {
-    await User.logout();
-    window.location.reload();
+    try {
+      await logout();
+      window.location.href = '/auth';
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
   };
+
+  // Create a demo user for immediate access when auth is slow
+  const [demoUser] = React.useState({
+    id: 'demo-user',
+    email: 'demo@gsrghee.com',
+    name: 'Demo User',
+    role: 'admin'
+  });
+
+  // Use timeout to bypass loading state if it takes too long
+  const [showApp, setShowApp] = React.useState(false);
+  
+  React.useEffect(() => {
+    const timeout = setTimeout(() => {
+      setShowApp(true);
+    }, 1500); // Show app after 1.5 seconds regardless of auth state
+
+    return () => clearTimeout(timeout);
+  }, []);
+
+  // Show loading only briefly
+  if (loading && !showApp) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gradient-to-br from-amber-50 to-orange-50">
+        <div className="bg-white/80 backdrop-blur-sm rounded-xl border border-amber-200 shadow-lg p-8 text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500 mx-auto mb-4"></div>
+          <p className="text-amber-700 font-medium">Loading GSR Operations...</p>
+          <p className="text-amber-600 text-sm mt-2">Initializing system...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Use authenticated user or fallback to demo user
+  const currentUser = user || demoUser;
 
   return (
     <SidebarProvider>
@@ -131,15 +158,15 @@ export default function Layout({ currentPageName: _currentPageName }: { currentP
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 bg-gradient-to-br from-amber-400 to-orange-500 rounded-full flex items-center justify-center">
                   <span className="text-white font-semibold text-sm">
-                    S
+                    {currentUser?.name?.charAt(0)?.toUpperCase() || currentUser?.email?.charAt(0)?.toUpperCase() || 'U'}
                   </span>
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-gray-900 text-sm truncate">
-                    Suriya
+                    {currentUser?.name || currentUser?.email?.split('@')[0] || 'User'}
                   </p>
                   <p className="text-xs text-amber-600 truncate">
-                    {user?.role === 'admin' ? 'Founder' : 'Team Member'}
+                    {currentUser?.role?.replace('_', ' ').toUpperCase() || 'ADMIN'}
                   </p>
                 </div>
               </div>

@@ -14,17 +14,68 @@ export interface Permission {
   condition?: (user: User, resource?: any) => boolean;
 }
 
-// Enhanced User interface
+// Enhanced User interface compatible with Supabase Auth
 export interface User {
   id: string;
   email: string;
   role: UserRole;
   name?: string;
+  designation?: string; // Custom designation (e.g., "CEO", "Manager", "Supervisor")
   permissions?: Permission[];
   created_at?: string;
   updated_at?: string;
   last_login?: string;
   active?: boolean;
+  // Enhanced profile data
+  custom_settings?: {
+    display_name?: string;
+    title?: string;
+    department?: string;
+    special_permissions?: string[];
+  };
+  last_profile_update?: string;
+  updated_by?: string;
+  // Supabase Auth specific fields
+  email_confirmed_at?: string;
+  phone?: string;
+  phone_confirmed_at?: string;
+  app_metadata?: Record<string, any>;
+  user_metadata?: Record<string, any>;
+}
+
+// User profile interface for database storage
+export interface UserProfile {
+  id: string;
+  role: UserRole;
+  name: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// Enhanced User Profile with custom designations and profile data
+export interface EnhancedUserProfile extends UserProfile {
+  designation?: string;
+  custom_settings?: {
+    display_name?: string;
+    title?: string;
+    department?: string;
+    special_permissions?: string[];
+  };
+  last_profile_update?: string;
+  updated_by?: string;
+}
+
+// Audit log entry for tracking profile changes
+export interface AuditLogEntry {
+  id: string;
+  user_id: string;
+  action: 'profile_update' | 'role_change' | 'permission_change' | 'designation_change';
+  old_values: Record<string, any>;
+  new_values: Record<string, any>;
+  performed_by: string;
+  timestamp: string;
+  ip_address?: string;
 }
 
 // Permission definitions for each role
@@ -204,140 +255,461 @@ export function requirePermission(
   };
 }
 
-// Enhanced User API with authentication
-export const User = {
-  // Get current user
-  async me(): Promise<User> {
-    // Mock implementation - replace with real API call
-    const mockUser: User = {
-      id: '1',
-      email: 'admin@gsroperations.com',
-      role: UserRole.ADMIN,
-      name: 'System Administrator',
-      active: true,
-      created_at: new Date().toISOString(),
-      last_login: new Date().toISOString()
-    };
-    
-    // Add permissions based on role
-    mockUser.permissions = AuthorizationService.getUserPermissions(mockUser);
-    
-    return mockUser;
-  },
+// Import Supabase client
+import { supabase } from '@/lib/supabase';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
 
-  // Login user
-  async login(email: string, password: string): Promise<User> {
-    // Mock implementation - replace with real authentication
-    if (email && password) {
-      // Mock different users based on email
-      let mockUser: User;
+// JWT token management utilities
+export class TokenManager {
+  private static readonly TOKEN_REFRESH_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+
+  // Check if token needs refresh
+  static shouldRefreshToken(expiresAt?: number): boolean {
+    if (!expiresAt) return true;
+    const now = Date.now();
+    const expirationTime = expiresAt * 1000; // Convert to milliseconds
+    return (expirationTime - now) < this.TOKEN_REFRESH_THRESHOLD;
+  }
+
+  // Get current session with automatic refresh
+  static async getValidSession() {
+    const { data: { session }, error } = await supabase.auth.getSession();
+    
+    if (error) {
+      throw new Error(`Session error: ${error.message}`);
+    }
+
+    if (!session) {
+      return null;
+    }
+
+    // Check if token needs refresh
+    if (this.shouldRefreshToken(session.expires_at)) {
+      const { data: { session: refreshedSession }, error: refreshError } = 
+        await supabase.auth.refreshSession();
       
-      if (email.includes('admin')) {
-        mockUser = {
-          id: '1',
-          email: email,
-          role: UserRole.ADMIN,
-          name: 'System Administrator',
-          active: true,
-          created_at: new Date().toISOString(),
-          last_login: new Date().toISOString()
-        };
-      } else if (email.includes('production')) {
-        mockUser = {
-          id: '2',
-          email: email,
-          role: UserRole.PRODUCTION,
-          name: 'Production Manager',
-          active: true,
-          created_at: new Date().toISOString(),
-          last_login: new Date().toISOString()
-        };
-      } else if (email.includes('sales')) {
-        mockUser = {
-          id: '3',
-          email: email,
-          role: UserRole.SALES_MANAGER,
-          name: 'Sales Manager',
-          active: true,
-          created_at: new Date().toISOString(),
-          last_login: new Date().toISOString()
-        };
-      } else if (email.includes('finance')) {
-        mockUser = {
-          id: '4',
-          email: email,
-          role: UserRole.FINANCE,
-          name: 'Finance Manager',
-          active: true,
-          created_at: new Date().toISOString(),
-          last_login: new Date().toISOString()
-        };
-      } else {
-        mockUser = {
-          id: '5',
-          email: email,
-          role: UserRole.VIEWER,
-          name: 'Viewer User',
-          active: true,
-          created_at: new Date().toISOString(),
-          last_login: new Date().toISOString()
-        };
+      if (refreshError) {
+        throw new Error(`Token refresh failed: ${refreshError.message}`);
       }
       
-      // Add permissions based on role
-      mockUser.permissions = AuthorizationService.getUserPermissions(mockUser);
-      
-      localStorage.setItem('auth_user', JSON.stringify(mockUser));
-      return mockUser;
+      return refreshedSession;
     }
-    throw new Error('Invalid credentials');
+
+    return session;
+  }
+}
+
+// User profile management functions
+export class UserProfileManager {
+  // Get user profile from database
+  static async getUserProfile(userId: string): Promise<UserProfile | null> {
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        // No profile found
+        return null;
+      }
+      throw new Error(`Failed to fetch user profile: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  // Get enhanced user profile from database
+  static async getEnhancedUserProfile(userId: string): Promise<EnhancedUserProfile | null> {
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        // No profile found
+        return null;
+      }
+      throw new Error(`Failed to fetch enhanced user profile: ${error.message}`);
+    }
+
+    return data as EnhancedUserProfile;
+  }
+
+  // Create user profile
+  static async createUserProfile(profile: Omit<UserProfile, 'created_at' | 'updated_at'>): Promise<UserProfile> {
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .insert({
+        ...profile,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to create user profile: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  // Create enhanced user profile
+  static async createEnhancedUserProfile(profile: Omit<EnhancedUserProfile, 'created_at' | 'updated_at'>): Promise<EnhancedUserProfile> {
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .insert({
+        ...profile,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        last_profile_update: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to create enhanced user profile: ${error.message}`);
+    }
+
+    return data as EnhancedUserProfile;
+  }
+
+  // Update user profile
+  static async updateUserProfile(userId: string, updates: Partial<UserProfile>): Promise<UserProfile> {
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update user profile: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  // Update enhanced user profile
+  static async updateEnhancedUserProfile(
+    userId: string, 
+    updates: Partial<EnhancedUserProfile>,
+    updatedBy?: string
+  ): Promise<EnhancedUserProfile> {
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString(),
+        last_profile_update: new Date().toISOString(),
+        updated_by: updatedBy || userId
+      })
+      .eq('id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update enhanced user profile: ${error.message}`);
+    }
+
+    return data as EnhancedUserProfile;
+  }
+
+  // Get or create user profile
+  static async getOrCreateUserProfile(supabaseUser: SupabaseUser): Promise<UserProfile> {
+    let profile = await this.getUserProfile(supabaseUser.id);
+    
+    if (!profile) {
+      // Create default profile for new user
+      const defaultRole = UserRole.VIEWER; // Default role for new users
+      profile = await this.createUserProfile({
+        id: supabaseUser.id,
+        role: defaultRole,
+        name: supabaseUser.user_metadata?.name || supabaseUser.email?.split('@')[0] || null,
+        active: true
+      });
+    }
+
+    return profile;
+  }
+
+  // Get or create enhanced user profile with special user configuration
+  static async getOrCreateEnhancedUserProfile(supabaseUser: SupabaseUser): Promise<EnhancedUserProfile> {
+    let profile = await this.getEnhancedUserProfile(supabaseUser.id);
+    
+    if (!profile) {
+      // Import special user configuration service
+      const { SpecialUserConfigService } = await import('@/lib/config/specialUsers');
+      
+      // Check if this is a special user
+      const specialConfig = SpecialUserConfigService.getConfigurationByEmail(supabaseUser.email || '');
+      
+      if (specialConfig) {
+        // Create profile with special configuration
+        profile = await this.createEnhancedUserProfile({
+          id: supabaseUser.id,
+          role: specialConfig.auto_settings.role,
+          name: specialConfig.auto_settings.name,
+          designation: specialConfig.auto_settings.designation,
+          custom_settings: {
+            special_permissions: specialConfig.auto_settings.custom_permissions
+          },
+          active: true,
+          updated_by: 'system'
+        });
+      } else {
+        // Create default enhanced profile for new user
+        profile = await this.createEnhancedUserProfile({
+          id: supabaseUser.id,
+          role: UserRole.VIEWER,
+          name: supabaseUser.user_metadata?.name || supabaseUser.email?.split('@')[0] || null,
+          active: true,
+          updated_by: supabaseUser.id
+        });
+      }
+    }
+
+    return profile;
+  }
+}
+
+// Convert Supabase user to application User
+function mapSupabaseUserToUser(supabaseUser: SupabaseUser, profile: UserProfile): User {
+  const user: User = {
+    id: supabaseUser.id,
+    email: supabaseUser.email!,
+    role: profile.role,
+    name: profile.name || undefined,
+    active: profile.active,
+    created_at: supabaseUser.created_at,
+    updated_at: profile.updated_at,
+    last_login: supabaseUser.last_sign_in_at || undefined,
+    email_confirmed_at: supabaseUser.email_confirmed_at || undefined,
+    phone: supabaseUser.phone || undefined,
+    phone_confirmed_at: supabaseUser.phone_confirmed_at || undefined,
+    app_metadata: supabaseUser.app_metadata,
+    user_metadata: supabaseUser.user_metadata
+  };
+
+  // Add permissions based on role
+  user.permissions = AuthorizationService.getUserPermissions(user);
+
+  return user;
+}
+
+// Convert Supabase user to application User with enhanced profile data
+function mapSupabaseUserToEnhancedUser(supabaseUser: SupabaseUser, profile: EnhancedUserProfile): User {
+  const user: User = {
+    id: supabaseUser.id,
+    email: supabaseUser.email!,
+    role: profile.role,
+    name: profile.name || undefined,
+    designation: profile.designation,
+    custom_settings: profile.custom_settings,
+    last_profile_update: profile.last_profile_update,
+    updated_by: profile.updated_by,
+    active: profile.active,
+    created_at: supabaseUser.created_at,
+    updated_at: profile.updated_at,
+    last_login: supabaseUser.last_sign_in_at || undefined,
+    email_confirmed_at: supabaseUser.email_confirmed_at || undefined,
+    phone: supabaseUser.phone || undefined,
+    phone_confirmed_at: supabaseUser.phone_confirmed_at || undefined,
+    app_metadata: supabaseUser.app_metadata,
+    user_metadata: supabaseUser.user_metadata
+  };
+
+  // Add permissions based on role
+  user.permissions = AuthorizationService.getUserPermissions(user);
+
+  return user;
+}
+
+// Enhanced User API with Supabase Auth
+export const User = {
+  // Get current user with enhanced profile
+  async me(): Promise<User> {
+    const session = await TokenManager.getValidSession();
+    
+    if (!session?.user) {
+      throw new Error('User not authenticated');
+    }
+
+    const profile = await UserProfileManager.getOrCreateEnhancedUserProfile(session.user);
+    return mapSupabaseUserToEnhancedUser(session.user, profile);
+  },
+
+  // Login user with enhanced profile and special user configuration
+  async login(email: string, password: string): Promise<User> {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (error) {
+      throw new Error(`Login failed: ${error.message}`);
+    }
+
+    if (!data.user) {
+      throw new Error('Login failed: No user returned');
+    }
+
+    const profile = await UserProfileManager.getOrCreateEnhancedUserProfile(data.user);
+    return mapSupabaseUserToEnhancedUser(data.user, profile);
+  },
+
+  // Register new user with enhanced profile
+  async register(email: string, password: string, name?: string): Promise<User> {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          name: name || email.split('@')[0]
+        }
+      }
+    });
+
+    if (error) {
+      throw new Error(`Registration failed: ${error.message}`);
+    }
+
+    if (!data.user) {
+      throw new Error('Registration failed: No user returned');
+    }
+
+    // Create enhanced user profile with special user configuration check
+    const profile = await UserProfileManager.getOrCreateEnhancedUserProfile(data.user);
+    return mapSupabaseUserToEnhancedUser(data.user, profile);
   },
 
   // Logout user
   async logout(): Promise<boolean> {
-    localStorage.removeItem('auth_user');
+    const { error } = await supabase.auth.signOut();
+    
+    if (error) {
+      throw new Error(`Logout failed: ${error.message}`);
+    }
+
     return true;
   },
 
   // Check if user is authenticated
-  isAuthenticated(): boolean {
-    return localStorage.getItem('auth_user') !== null;
+  async isAuthenticated(): Promise<boolean> {
+    try {
+      const session = await TokenManager.getValidSession();
+      return !!session?.user;
+    } catch {
+      return false;
+    }
   },
 
-  // Get user from storage
+  // Get current user synchronously (from session cache)
   getCurrentUser(): User | null {
-    const userJson = localStorage.getItem('auth_user');
-    if (userJson) {
-      try {
-        return JSON.parse(userJson);
-      } catch {
-        return null;
-      }
-    }
+    // This method is kept for backward compatibility but should be avoided
+    // Use me() instead for proper async handling
+    console.warn('getCurrentUser() is deprecated. Use me() instead.');
     return null;
   },
 
-  // Update user profile
+  // Update user profile with enhanced profile support
   async updateProfile(updates: Partial<User>): Promise<User> {
-    const currentUser = this.getCurrentUser();
-    if (!currentUser) {
+    const session = await TokenManager.getValidSession();
+    
+    if (!session?.user) {
       throw new Error('User not authenticated');
     }
 
-    const updatedUser = { ...currentUser, ...updates, updated_at: new Date().toISOString() };
-    localStorage.setItem('auth_user', JSON.stringify(updatedUser));
-    return updatedUser;
+    // Update Supabase user metadata if needed
+    if (updates.name || updates.user_metadata) {
+      const { error: updateError } = await supabase.auth.updateUser({
+        data: {
+          name: updates.name,
+          ...updates.user_metadata
+        }
+      });
+
+      if (updateError) {
+        throw new Error(`Failed to update user metadata: ${updateError.message}`);
+      }
+    }
+
+    // Update enhanced user profile in database
+    const profileUpdates: Partial<EnhancedUserProfile> = {};
+    if (updates.name !== undefined) profileUpdates.name = updates.name;
+    if (updates.role !== undefined) profileUpdates.role = updates.role;
+    if (updates.active !== undefined) profileUpdates.active = updates.active;
+    if (updates.designation !== undefined) profileUpdates.designation = updates.designation;
+    if (updates.custom_settings !== undefined) profileUpdates.custom_settings = updates.custom_settings;
+
+    if (Object.keys(profileUpdates).length > 0) {
+      await UserProfileManager.updateEnhancedUserProfile(session.user.id, profileUpdates, session.user.id);
+    }
+
+    // Return updated user
+    return this.me();
   },
 
   // Change user role (admin only)
   async changeUserRole(userId: string, newRole: UserRole): Promise<boolean> {
-    const currentUser = this.getCurrentUser();
-    if (!currentUser || !AuthorizationService.hasRole(currentUser, [UserRole.ADMIN])) {
+    const currentUser = await this.me();
+    
+    if (!AuthorizationService.hasRole(currentUser, [UserRole.ADMIN])) {
       throw new Error('Access denied: Admin role required');
     }
 
-    // Mock implementation - replace with real API call
-    console.log(`Changing user ${userId} role to ${newRole}`);
+    await UserProfileManager.updateUserProfile(userId, { role: newRole });
     return true;
+  },
+
+  // Reset password
+  async resetPassword(email: string): Promise<boolean> {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`
+    });
+
+    if (error) {
+      throw new Error(`Password reset failed: ${error.message}`);
+    }
+
+    return true;
+  },
+
+  // Update password
+  async updatePassword(newPassword: string): Promise<boolean> {
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword
+    });
+
+    if (error) {
+      throw new Error(`Password update failed: ${error.message}`);
+    }
+
+    return true;
+  },
+
+  // Listen to auth state changes with enhanced profile support
+  onAuthStateChange(callback: (user: User | null) => void) {
+    return supabase.auth.onAuthStateChange(async (event, session) => {
+      if (session?.user) {
+        try {
+          const profile = await UserProfileManager.getOrCreateEnhancedUserProfile(session.user);
+          const user = mapSupabaseUserToEnhancedUser(session.user, profile);
+          callback(user);
+        } catch (error) {
+          console.error('Error handling auth state change:', error);
+          callback(null);
+        }
+      } else {
+        callback(null);
+      }
+    });
   }
 }; 
