@@ -53,24 +53,46 @@ export class RealtimeManager {
 
   // Set up connection state monitoring
   private setupConnectionMonitoring() {
-    // Monitor Supabase connection state
-    supabase.realtime.onOpen(() => {
-      this.setConnectionState(ConnectionState.CONNECTED);
-      this.reconnectAttempts = 0;
-      console.log('Real-time connection established');
-    });
+    // Monitor Supabase connection state using the correct API
+    // Note: Modern Supabase clients handle connection state differently
+    // We'll use a polling approach to check connection status
+    this.startConnectionPolling();
+    
+    // Set initial state as connected (optimistic)
+    this.setConnectionState(ConnectionState.CONNECTED);
+    console.log('Real-time connection monitoring initialized');
+  }
 
-    supabase.realtime.onClose(() => {
-      this.setConnectionState(ConnectionState.DISCONNECTED);
-      console.log('Real-time connection closed');
-      this.handleReconnection();
-    });
+  // Poll connection status periodically
+  private startConnectionPolling() {
+    setInterval(() => {
+      this.checkConnectionStatus();
+    }, 5000); // Check every 5 seconds
+  }
 
-    supabase.realtime.onError((error) => {
+  // Check connection status
+  private async checkConnectionStatus() {
+    try {
+      // Try to get current session to verify connection
+      const { data, error } = await supabase.auth.getSession();
+      
+      if (error) {
+        this.setConnectionState(ConnectionState.ERROR);
+        console.error('Real-time connection error:', error);
+        this.handleReconnection();
+      } else {
+        // Connection is healthy
+        if (this.connectionState !== ConnectionState.CONNECTED) {
+          this.setConnectionState(ConnectionState.CONNECTED);
+          this.reconnectAttempts = 0;
+          console.log('Real-time connection restored');
+        }
+      }
+    } catch (error) {
       this.setConnectionState(ConnectionState.ERROR);
-      console.error('Real-time connection error:', error);
+      console.error('Real-time connection check failed:', error);
       this.handleReconnection();
-    });
+    }
   }
 
   // Handle automatic reconnection

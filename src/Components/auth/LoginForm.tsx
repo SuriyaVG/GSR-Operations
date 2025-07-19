@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useAuth } from '../../lib/auth';
+import { useAuth } from '../../lib/auth-simple';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -29,12 +29,6 @@ export function LoginForm() {
     } finally {
       setLoading(false);
     }
-  };
-
-  // Quick login buttons for demo purposes
-  const quickLogin = (role: string, userEmail: string) => {
-    setEmail(userEmail);
-    setPassword('password123');
   };
 
   return (
@@ -74,44 +68,6 @@ export function LoginForm() {
           {loading ? 'Logging in...' : 'Login'}
         </Button>
       </form>
-
-      <div className="mt-6 pt-6 border-t border-gray-200">
-        <p className="text-sm text-gray-600 mb-3">Quick login for demo:</p>
-        <div className="grid grid-cols-2 gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => quickLogin('admin', 'admin@gsroperations.com')}
-            disabled={loading}
-          >
-            Admin
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => quickLogin('production', 'production@gsroperations.com')}
-            disabled={loading}
-          >
-            Production
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => quickLogin('sales', 'sales@gsroperations.com')}
-            disabled={loading}
-          >
-            Sales
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => quickLogin('finance', 'finance@gsroperations.com')}
-            disabled={loading}
-          >
-            Finance
-          </Button>
-        </div>
-      </div>
     </div>
   );
 }

@@ -1,21 +1,22 @@
-// src/utils.ts
+// Utility functions for the application
 
-// A map of page names to their URL paths
-const pageRoutes = {
-  Dashboard: '/dashboard',
-  MaterialIntake: '/material-intake',
-  Production: '/production',
-  Orders: '/orders',
-  Customers: '/customers',
-  Finance: '/finance',
-};
+// Create page URL from page name
+export function createPageUrl(pageName: string): string {
+  const pageRoutes: Record<string, string> = {
+    'Dashboard': '/dashboard',
+    'MaterialIntake': '/material-intake',
+    'Production': '/production',
+    'Orders': '/orders',
+    'Customers': '/customers',
+    'Finance': '/finance',
+    'Profile': '/profile',
+    'Admin': '/admin'
+  };
 
-export function createPageUrl(page: keyof typeof pageRoutes): string {
-  return pageRoutes[page] || '/';
+  return pageRoutes[pageName] || '/dashboard';
 }
 
-// Example date formatting helper (used in Dashboard)
-export function formatDate(date: Date | string, _format: string = 'yyyy-MM-dd'): string {
-  const d = typeof date === 'string' ? new Date(date) : date;
-  return d.toLocaleDateString(); // Replace with date-fns if needed
-} 
+// Class name utility for conditional styling
+export function cn(...classes: (string | undefined | null | boolean)[]): string {
+  return classes.filter(Boolean).join(' ');
+}

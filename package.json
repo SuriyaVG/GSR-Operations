@@ -19,7 +19,8 @@
     "db:migrate": "node scripts/migrate-supabase.js",
     "db:seed": "node scripts/seed-supabase.js",
     "db:verify": "node scripts/verify-supabase.js",
-    "db:health": "node scripts/supabase-health-check.js"
+    "db:health": "node scripts/supabase-health-check.js",
+    "create:admin": "node scripts/create-admin-user.js"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.14",

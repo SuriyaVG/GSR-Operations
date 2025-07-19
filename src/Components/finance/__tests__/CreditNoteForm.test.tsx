@@ -55,7 +55,8 @@ describe('CreditNoteForm', () => {
       />
     );
 
-    expect(screen.getByText('Create Credit Note')).toBeInTheDocument();
+    expect(screen.getByText('Create Credit Note')).toBeInTheDocument(); // Title
+    expect(screen.getByText('Submit Credit Note')).toBeInTheDocument(); // Button
     expect(screen.getByLabelText('Select Invoice')).toBeInTheDocument();
     expect(screen.getByLabelText('Credit Amount (₹)')).toBeInTheDocument();
     expect(screen.getByLabelText('Reason')).toBeInTheDocument();
@@ -87,7 +88,7 @@ describe('CreditNoteForm', () => {
       />
     );
 
-    const submitButton = screen.getByText('Create Credit Note');
+    const submitButton = screen.getByText('Submit Credit Note');
     fireEvent.click(submitButton);
 
     await waitFor(() => {
@@ -113,7 +114,7 @@ describe('CreditNoteForm', () => {
     const amountInput = screen.getByLabelText('Credit Amount (₹)');
     fireEvent.change(amountInput, { target: { value: '1500' } });
 
-    const submitButton = screen.getByText('Create Credit Note');
+    const submitButton = screen.getByText('Submit Credit Note');
     fireEvent.click(submitButton);
 
     await waitFor(() => {
@@ -140,10 +141,17 @@ describe('CreditNoteForm', () => {
     const amountInput = screen.getByLabelText('Credit Amount (₹)');
     fireEvent.change(amountInput, { target: { value: '500' } });
 
-    const reasonSelect = screen.getByLabelText('Reason');
-    fireEvent.change(reasonSelect, { target: { value: 'Product return' } });
+    // For Radix UI Select, we need to click the trigger and then select an option
+    const reasonTrigger = screen.getByRole('combobox');
+    fireEvent.click(reasonTrigger);
+    
+    // Wait for the dropdown to appear and select an option
+    await waitFor(() => {
+      const productReturnOption = screen.getByRole('option', { name: 'Product return' });
+      fireEvent.click(productReturnOption);
+    });
 
-    const submitButton = screen.getByText('Create Credit Note');
+    const submitButton = screen.getByText('Submit Credit Note');
     fireEvent.click(submitButton);
 
     await waitFor(() => {

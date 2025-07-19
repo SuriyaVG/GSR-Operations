@@ -11,15 +11,15 @@ export interface UserConfiguration {
   };
 }
 
-// Special user configurations - predefined settings for specific emails
-export const SPECIAL_USER_CONFIGS: Record<string, UserConfiguration> = {
+// Special user configurations with predefined settings
+const SPECIAL_USER_CONFIGS: Record<string, UserConfiguration> = {
   'suriyavg834@gmail.com': {
     email: 'suriyavg834@gmail.com',
     auto_settings: {
       name: 'Suriya',
       designation: 'CEO',
       role: UserRole.ADMIN,
-      custom_permissions: ['*'] // Full access
+      custom_permissions: ['*'] // All permissions
     }
   }
   // Additional special users can be added here
@@ -28,31 +28,41 @@ export const SPECIAL_USER_CONFIGS: Record<string, UserConfiguration> = {
 // Service class for managing special user configurations
 export class SpecialUserConfigService {
   /**
-   * Get special configuration for a user by email
+   * Get configuration for a specific email
    */
   static getConfigurationByEmail(email: string): UserConfiguration | null {
-    return SPECIAL_USER_CONFIGS[email.toLowerCase()] || null;
+    const normalizedEmail = email.toLowerCase().trim();
+    return SPECIAL_USER_CONFIGS[normalizedEmail] || null;
   }
 
   /**
    * Check if an email has special configuration
    */
-  static hasSpecialConfiguration(email: string): boolean {
-    return email.toLowerCase() in SPECIAL_USER_CONFIGS;
+  static isSpecialUser(email: string): boolean {
+    const normalizedEmail = email.toLowerCase().trim();
+    return normalizedEmail in SPECIAL_USER_CONFIGS;
   }
 
   /**
-   * Get all configured special user emails
+   * Get all special user configurations
    */
-  static getConfiguredEmails(): string[] {
+  static getAllConfigurations(): UserConfiguration[] {
+    return Object.values(SPECIAL_USER_CONFIGS);
+  }
+
+  /**
+   * Get special user emails
+   */
+  static getSpecialUserEmails(): string[] {
     return Object.keys(SPECIAL_USER_CONFIGS);
   }
 
   /**
    * Apply special configuration to user data
    */
-  static applyConfiguration(email: string, userData: any): any {
+  static applySpecialConfiguration(email: string, userData: any): any {
     const config = this.getConfigurationByEmail(email);
+    
     if (!config) {
       return userData;
     }
@@ -60,9 +70,68 @@ export class SpecialUserConfigService {
     return {
       ...userData,
       name: config.auto_settings.name,
-      role: config.auto_settings.role,
       designation: config.auto_settings.designation,
-      custom_permissions: config.auto_settings.custom_permissions
+      role: config.auto_settings.role,
+      custom_settings: {
+        ...userData.custom_settings,
+        special_permissions: config.auto_settings.custom_permissions
+      }
     };
   }
+
+  /**
+   * Validate special user configuration
+   */
+  static validateConfiguration(config: UserConfiguration): boolean {
+    if (!config.email || !config.auto_settings) {
+      return false;
+    }
+
+    const { name, designation, role } = config.auto_settings;
+    
+    if (!name || !designation || !role) {
+      return false;
+    }
+
+    // Validate role is a valid UserRole
+    if (!Object.values(UserRole).includes(role)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Add or update special user configuration (for admin use)
+   */
+  static addConfiguration(config: UserConfiguration): boolean {
+    if (!this.validateConfiguration(config)) {
+      throw new Error('Invalid user configuration');
+    }
+
+    const normalizedEmail = config.email.toLowerCase().trim();
+    SPECIAL_USER_CONFIGS[normalizedEmail] = {
+      ...config,
+      email: normalizedEmail
+    };
+
+    return true;
+  }
+
+  /**
+   * Remove special user configuration (for admin use)
+   */
+  static removeConfiguration(email: string): boolean {
+    const normalizedEmail = email.toLowerCase().trim();
+    
+    if (!(normalizedEmail in SPECIAL_USER_CONFIGS)) {
+      return false;
+    }
+
+    delete SPECIAL_USER_CONFIGS[normalizedEmail];
+    return true;
+  }
 }
+
+// Export the configurations for external access if needed
+export { SPECIAL_USER_CONFIGS };

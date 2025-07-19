@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "name": "Update Steering Docs",
+  "description": "Monitors all file operations (creation, save, deletion) and updates steering documentation when needed to maintain accurate project guidance",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "**/*"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A file has been created, saved, or deleted in the project. Please review the change and determine if any steering documentation in the .kiro/steering/ directory needs to be updated to reflect new patterns, technologies, or structural changes. Focus on updating tech.md, structure.md, and product.md if the changes affect technology stack, project organization, or business functionality respectively."
+  }
+}

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { Navigate } from 'react-router-dom';
 import { User, UserRole, AuthorizationService } from '../Entities/User';
-import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
+import { supabase } from './supabase';
 
 // Authentication context interface
 interface AuthContextType {
@@ -11,7 +12,6 @@ interface AuthContextType {
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   updatePassword: (newPassword: string) => Promise<void>;
-  updateProfile: (updates: Partial<User>) => Promise<void>;
   hasPermission: (resource: string, action: 'create' | 'read' | 'update' | 'delete', resourceData?: any) => boolean;
   hasRole: (roles: UserRole[]) => boolean;
   canOverridePrice: (originalPrice: number, newPrice: number) => boolean;
@@ -31,51 +31,132 @@ interface AuthProviderProps {
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [initialized, setInitialized] = useState(false);
 
-  // Initialize authentication state and set up auth state listener
+  // Initialize authentication state
   useEffect(() => {
-    const initAuth = async () => {
+    let mounted = true;
+    let authSubscription: any = null;
+
+    const initializeAuth = async () => {
+      if (!mounted) return;
+
       try {
-        // Try to get current user from session
-        const currentUser = await User.me();
-        setUser(currentUser);
+        // Set up auth state listener first
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(
+          async (event, session) => {
+            console.debug('Auth state change:', event);
+            
+            if (!mounted) return;
+
+            if (session?.user) {
+              try {
+                const currentUser = await User.me();
+                if (mounted) {
+                  setUser(currentUser);
+                  setLoading(false);
+                }
+              } catch (error) {
+                console.error('Error getting user:', error);
+                if (mounted) {
+                  setUser(null);
+                  setLoading(false);
+                }
+              }
+            } else {
+              if (mounted) {
+                setUser(null);
+                setLoading(false);
+              }
+            }
+          }
+        );
+        
+        authSubscription = subscription;
+
+        // Get initial session
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (!mounted) return;
+
+        if (error) {
+          console.error('Session error:', error);
+          setUser(null);
+          setLoading(false);
+          return;
+        }
+
+        // Handle initial session
+        if (session?.user) {
+          try {
+            const currentUser = await User.me();
+            if (mounted) {
+              setUser(currentUser);
+            }
+          } catch (error) {
+            console.error('Error getting initial user:', error);
+            if (mounted) {
+              setUser(null);
+            }
+          }
+        } else {
+          if (mounted) {
+            setUser(null);
+          }
+        }
+
+        if (mounted) {
+          setLoading(false);
+          setInitialized(true);
+        }
+
       } catch (error) {
-        // User not authenticated or session expired
-        console.debug('No authenticated user found:', error);
-        setUser(null);
-      } finally {
-        setLoading(false);
+        console.error('Auth initialization error:', error);
+        if (mounted) {
+          setUser(null);
+          setLoading(false);
+          setInitialized(true);
+        }
       }
     };
 
-    // Set up auth state change listener
-    const { data: { subscription } } = User.onAuthStateChange((authUser) => {
-      setUser(authUser);
-      if (!loading) {
-        // Only set loading to false after initial auth check
+    // Set timeout to prevent infinite loading
+    const timeoutId = setTimeout(() => {
+      if (mounted) {
+        console.debug('Auth initialization timeout - setting loading to false');
         setLoading(false);
+        setInitialized(true);
       }
-    });
+    }, 3000);
 
-    // Initialize auth state
-    initAuth();
+    initializeAuth();
 
-    // Cleanup subscription on unmount
     return () => {
-      subscription.unsubscribe();
+      mounted = false;
+      clearTimeout(timeoutId);
+      if (authSubscription) {
+        authSubscription.unsubscribe();
+      }
     };
-  }, []);
+  }, []); // Remove initialized dependency to prevent loops
 
   // Login function
   const login = async (email: string, password: string) => {
     setLoading(true);
     try {
-      const loggedInUser = await User.login(email, password);
-      setUser(loggedInUser);
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password
+      });
+
+      if (error) {
+        throw new Error(`Login failed: ${error.message}`);
+      }
+
+      // Don't set user here - auth state change will handle it
     } catch (error) {
-      throw error;
-    } finally {
       setLoading(false);
+      throw error;
     }
   };
 
@@ -83,32 +164,51 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const register = async (email: string, password: string, name?: string) => {
     setLoading(true);
     try {
-      const registeredUser = await User.register(email, password, name);
-      setUser(registeredUser);
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            name: name || email.split('@')[0]
+          }
+        }
+      });
+
+      if (error) {
+        throw new Error(`Registration failed: ${error.message}`);
+      }
+
+      // Don't set user here - auth state change will handle it
     } catch (error) {
-      throw error;
-    } finally {
       setLoading(false);
+      throw error;
     }
   };
 
   // Logout function
   const logout = async () => {
-    setLoading(true);
     try {
-      await User.logout();
-      setUser(null);
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        throw new Error(`Logout failed: ${error.message}`);
+      }
+      // Auth state change will handle setting user to null
     } catch (error) {
       console.error('Logout failed:', error);
-    } finally {
-      setLoading(false);
+      throw error;
     }
   };
 
   // Reset password function
   const resetPassword = async (email: string) => {
     try {
-      await User.resetPassword(email);
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`
+      });
+
+      if (error) {
+        throw new Error(`Password reset failed: ${error.message}`);
+      }
     } catch (error) {
       throw error;
     }
@@ -117,21 +217,19 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Update password function
   const updatePassword = async (newPassword: string) => {
     try {
-      await User.updatePassword(newPassword);
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword
+      });
+
+      if (error) {
+        throw new Error(`Password update failed: ${error.message}`);
+      }
     } catch (error) {
       throw error;
     }
   };
 
-  // Update profile function
-  const updateProfile = async (updates: Partial<User>) => {
-    try {
-      const updatedUser = await User.updateProfile(updates);
-      setUser(updatedUser);
-    } catch (error) {
-      throw error;
-    }
-  };
+
 
   // Permission checking functions
   const hasPermission = (
@@ -176,7 +274,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     logout,
     resetPassword,
     updatePassword,
-    updateProfile,
     hasPermission,
     hasRole,
     canOverridePrice,
@@ -229,14 +326,8 @@ export function ProtectedRoute({
   }
 
   if (!user) {
-    return fallback || (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Authentication Required</h2>
-          <p className="text-gray-600">Please log in to access this page.</p>
-        </div>
-      </div>
-    );
+    // Redirect to authentication page instead of showing error message
+    return <Navigate to="/auth" replace />;
   }
 
   // Check role-based access

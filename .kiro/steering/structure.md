@@ -1,86 +1,142 @@
+---
+inclusion: always
+---
+
 # Project Structure
 
-## Root Directory
+## Directory Organization
 ```
-├── src/                    # Source code
+├── src/                    # Source code (React components, business logic)
 ├── public/                 # Static assets
 ├── database/               # Database migrations and schemas
-├── .kiro/                  # Kiro configuration and specs
-├── node_modules/           # Dependencies
-└── config files            # Build and tool configurations
+│   ├── migrations/         # General SQL migration files
+│   └── supabase/           # Supabase-specific migrations and schemas
+├── scripts/                # Database management and testing utilities
+├── docs/                   # Documentation files
+└── .kiro/                  # Kiro configuration and specifications
+    ├── specs/              # Feature specifications and designs
+    └── steering/           # Development guidelines and standards
 ```
 
-## Source Organization (`src/`)
+## Source Code Organization
 
 ### Components (`src/Components/`)
-Organized by feature domains with consistent naming:
-- `auth/` - Authentication components
-- `customers/` - Customer management UI
-- `dashboard/` - Dashboard widgets and metrics
-- `finance/` - Financial reporting components
-- `material/` - Material intake and inventory
-- `orders/` - Order management components
-- `production/` - Production tracking UI
-- `ui/` - Reusable UI components and design system
-- `examples/` - Component examples and demos
+- **Domain-based folders**: `auth/`, `customers/`, `finance/`, `material/`, `orders/`, `production/`, `admin/`, `dashboard/`
+- **Core UI**: `ui/` contains reusable design system components (shadcn/ui based)
+- **Examples**: `examples/` contains component demos and testing utilities
 
 ### Business Logic (`src/lib/`)
-- `auth/` - Authentication services and middleware
-- `hooks/` - Custom React hooks
-- `__tests__/` - Unit tests for utilities
-- Core services: `database.ts`, `validation.ts`, `toast.ts`
-- Business logic: `inventory.ts`, `productionBatch.ts`
+- **Authentication**: `auth.tsx`, `auth-simple.tsx`, `authMiddleware.ts`, `authorization.ts` for comprehensive auth system
+- **Services**: `services/` directory for domain services (audit, user profile, role management, error handling)
+- **Hooks**: `hooks/` for custom React hooks (form validation, order management, realtime subscriptions)
+- **Configuration**: `config/` for app configuration and special user settings
+- **Core utilities**: `database.ts`, `validation.ts`, `toast.ts`, `realtime.ts`, `supabase.ts`
+- **Business domains**: `financial.ts`, `inventory.ts`, `orderService.ts`, `productionBatch.ts`
 
 ### Data Layer (`src/Entities/`)
-TypeScript interfaces and entity definitions:
-- `User.ts` - User roles and authorization
-- `SamplesLog.ts` - Sample tracking entities
+- **Comprehensive entity interfaces** with TypeScript types
+- **Key entities**: `User.ts`, `Customer.ts`, `FinancialLedger.ts`, `SamplesLog.ts`, `Order.ts`, `ProductionBatch.ts`
+- **Supporting entities**: `Invoice.ts`, `CreditNote.ts`, `MaterialIntakeLog.ts`, `InteractionLog.ts`, `ReturnsLog.ts`
+- **Configuration entities**: `PricingRule.ts`, `Supplier.ts`, `RawMaterial.ts`
 
 ### Pages (`src/Pages/`)
-Top-level route components for each major section
+- **Top-level route components**: `Dashboard.tsx`, `Finance.tsx`, `Orders.tsx`, `Production.tsx`, `Customers.tsx`, `MaterialIntake.tsx`
+- **Administrative pages**: `Admin.tsx`, `Profile.tsx`
+- **Layout component**: `Layout.tsx` with navigation and authentication
 
-## Naming Conventions
+### Types (`src/types/`)
+- **Supabase types**: Auto-generated database types from Supabase schema
 
-### Files
-- **Components**: PascalCase (e.g., `OrderForm.tsx`)
-- **Utilities**: camelCase (e.g., `validation.ts`)
-- **Tests**: `*.test.ts` or `__tests__/` directory
-- **Types/Entities**: PascalCase (e.g., `User.ts`)
+### Testing (`src/test/`)
+- **Test setup**: Global test configuration and utilities
 
-### Components
-- Feature components in domain folders
-- Reusable UI components in `ui/` folder
-- Test files co-located with components when possible
+## Database Structure
 
-## Component Organization & Styling
+### Supabase Migrations (`database/supabase/migrations/`)
+- **Initial schema**: Core tables and relationships
+- **RLS policies**: Row Level Security for data access control
+- **Seed data**: Development and testing data
+- **Audit system**: Comprehensive audit logging tables and functions
 
-#### Styling Governance
-- All new components must adhere strictly to the existing Tailwind theme tokens:
-  - `from-amber-50 to-orange-50` backgrounds
-  - `border-amber-200` accents
-  - `rounded-xl` corners and `backdrop-blur-sm` cards
-- **No deviations** from these tokens are permitted without an explicit review and approval.
+### Scripts (`scripts/`)
+- **Database management**: Setup, migration, seeding, and health checks
+- **Testing utilities**: Authorization testing, user creation, verification
+- **Supabase manager**: Comprehensive database lifecycle management
 
-### Import Patterns
-- Use `@/` alias for src imports
-- Group imports: external libraries, internal modules, relative imports
-- Prefer named exports over default exports for utilities
+## Code Conventions
 
-## Architecture Patterns
+### Naming & File Structure
+- **Components**: PascalCase (e.g., `OrderForm.tsx`, `AuditLogViewer.tsx`)
+- **Utilities**: camelCase (e.g., `validation.ts`, `userProfileService.ts`)
+- **Tests**: Co-located in `__tests__/` directories with descriptive names
+- **Imports**: Use `@/` alias for src imports, group by external/internal/relative
 
-### Component Structure
-- Functional components with TypeScript
-- Custom hooks for business logic
-- Props interfaces defined inline or exported
-- Error boundaries for robust error handling
+### Component Architecture
+- **Functional components** with TypeScript interfaces
+- **Props interfaces** defined inline or exported
+- **Custom hooks** for business logic extraction
+- **Error boundaries** and comprehensive error handling
+- **Loading states** and skeleton components for better UX
 
-### Data Flow
-- Mock database service with retry logic
-- Entity-based data access patterns
-- Form validation with custom hooks
-- Toast notifications for user feedback
+### Authentication & Authorization
+- **Role-based access control** with 5 user roles (Admin, Production, Sales Manager, Finance, Viewer)
+- **Permission-based authorization** for fine-grained access control with resource-action model
+- **Custom permissions system** with wildcard support and special user configurations
+- **Protected routes** and component-level permission gates (`ProtectedRoute`, `PermissionGate`)
+- **Middleware functions** for API operation protection with retry logic
+- **Enhanced user profiles** with custom designations, departments, and special permissions
+- **Special user configuration system** for founder and key personnel with auto-applied settings
+- **Profile management service** with validation, sanitization, and audit logging
+- **Role change notifications** with subscription-based listeners
+- **Robust auth state management** with lifecycle-aware initialization and cleanup
+- **Race condition prevention** with mounted flags and proper subscription handling
+- **Enhanced error handling** for auth state changes and session management
+- **Profile history tracking** and audit trail for compliance
+- **Simplified auth implementation** available as fallback (`auth-fixed.tsx`) with core functionality only
 
-### Testing Strategy
-- Unit tests for utilities and business logic
-- Component tests for UI interactions
-- Test files in `__tests__/` directories or co-located
+### Styling Requirements
+- **Strict adherence** to Tailwind theme tokens:
+  - Backgrounds: `from-amber-50 to-orange-50`
+  - Borders: `border-amber-200`
+  - UI elements: `rounded-xl` corners, `backdrop-blur-sm` for cards
+- **shadcn/ui components** with custom theme integration
+- Use `class-variance-authority`, `clsx`, and `tailwind-merge` for conditional styling
+
+### Testing Patterns
+- **Comprehensive test coverage**: Unit, integration, and component tests
+- **Test organization**: `__tests__/` directories with clear naming conventions
+- **Mock strategies**: Supabase mocking, service mocking, and component mocking
+- **Test utilities**: Custom test helpers and setup functions
+
+### Data Flow & State Management
+- **Supabase integration**: Real-time subscriptions and optimistic updates
+- **Entity-based patterns**: Consistent data access through entity services
+- **Form validation**: Custom hooks with comprehensive validation rules
+- **Error handling**: Centralized error handling with user-friendly feedback
+- **Audit logging**: Comprehensive audit trail for all data modifications
+
+### Service Architecture
+- **Domain services**: Specialized services for user profiles, roles, and audit logging
+- **Error handling service**: Centralized error processing and user feedback
+- **Real-time service**: WebSocket management and subscription handling
+- **Validation service**: Input sanitization and business rule validation
+
+### Authentication Patterns
+- **AuthProvider**: React Context provider for global authentication state with lifecycle-aware initialization
+- **useAuth hook**: Primary hook for accessing authentication state and methods
+- **usePermissions hook**: Convenience hook for permission checking with role-specific methods
+- **ProtectedRoute**: HOC for route-level access control with role and permission requirements
+- **PermissionGate**: Component for conditional rendering based on permissions
+- **Special User System**: Automatic configuration application for designated users (founders, key personnel)
+- **Profile Management**: Enhanced user profiles with custom fields, validation, and audit trails
+- **Role Change Subscriptions**: Real-time notifications for permission and role updates
+- **Auth State Initialization**: Listener-first approach to prevent race conditions between session retrieval and state changes
+- **Component Lifecycle Safety**: Mounted flags and proper cleanup to prevent memory leaks and state updates on unmounted components
+- **Timeout Protection**: 3-second initialization timeout to prevent infinite loading states
+- **Dependency Loop Prevention**: Careful useEffect dependency management to avoid re-initialization cycles
+- **Simplified Auth Alternative**: `auth-simple.tsx` provides core authentication without enhanced features for fallback scenarios
+  - Streamlined profile management without complex role management or audit trails
+  - Basic authentication flow with login/logout functionality (`useAuth` hook)
+  - Essential user interface with simplified profile settings (`ProfileSettings.simple.tsx`)
+  - Minimal role assignment for basic access control (Admin, Viewer)
+  - Direct Supabase Auth integration without enhanced user profile services

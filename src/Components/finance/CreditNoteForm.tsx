@@ -329,13 +329,13 @@ export default function CreditNoteForm({
               </div>
 
               <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="reason">Reason</Label>
+                <Label id="reason-label">Reason</Label>
                 <Select 
                   value={formData.reason} 
                   onValueChange={(value) => handleChange('reason', value)}
                 >
                   <SelectTrigger 
-                    id="reason"
+                    aria-labelledby="reason-label"
                     className={validationErrors.reason ? 'border-red-300' : ''}
                   >
                     <SelectValue placeholder="Select reason for credit note" />
@@ -390,7 +390,7 @@ export default function CreditNoteForm({
               className="bg-gradient-to-r from-amber-500 to-orange-500 text-white"
               disabled={isSubmitting || !selectedInvoice}
             >
-              {isSubmitting ? 'Creating...' : 'Create Credit Note'}
+              {isSubmitting ? 'Creating...' : 'Submit Credit Note'}
             </Button>
           </DialogFooter>
         </form>

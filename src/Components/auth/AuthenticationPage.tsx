@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { useAuth, usePermissions } from '../../lib/auth';
+import React, { useState, useEffect } from 'react';
+import { useAuth } from '../../lib/auth-simple';
 import { UserRole } from '../../Entities/User';
+import { useNavigate } from 'react-router-dom';
 import { 
   User, 
   Lock, 
@@ -17,28 +18,20 @@ import {
 import { format } from 'date-fns';
 
 export function AuthenticationPage() {
+  const navigate = useNavigate();
   const { 
     user, 
     loading, 
     login, 
-    register, 
-    logout, 
-    resetPassword, 
-    updatePassword, 
-    updateProfile 
+    logout
   } = useAuth();
-  
-  const {
-    canCreate,
-    canRead,
-    canUpdate,
-    canDelete,
-    isAdmin,
-    isProduction,
-    isSalesManager,
-    isFinance,
-    isViewer
-  } = usePermissions();
+
+  // Redirect to dashboard if user is already authenticated
+  useEffect(() => {
+    if (user && !loading) {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [user, loading, navigate]);
 
   // Form states
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
@@ -63,6 +56,8 @@ export function AuthenticationPage() {
       await login(loginForm.email, loginForm.password);
       showMessage('success', 'Welcome back! Login successful.');
       setLoginForm({ email: '', password: '' });
+      // Redirect to dashboard after successful login
+      navigate('/dashboard', { replace: true });
     } catch (error) {
       showMessage('error', `Login failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -70,52 +65,29 @@ export function AuthenticationPage() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      await register(registerForm.email, registerForm.password, registerForm.name);
-      showMessage('success', 'Account created successfully! Welcome to GheeRoots.');
-      setRegisterForm({ email: '', password: '', name: '' });
-    } catch (error) {
-      showMessage('error', `Registration failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+    showMessage('info', 'Registration is currently disabled. Please contact admin.');
   };
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      await resetPassword(resetEmail);
-      showMessage('success', 'Password reset email sent! Check your inbox.');
-      setResetEmail('');
-    } catch (error) {
-      showMessage('error', `Password reset failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+    showMessage('info', 'Password reset is currently disabled. Please contact admin.');
   };
 
   const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      await updatePassword(newPassword);
-      showMessage('success', 'Password updated successfully!');
-      setNewPassword('');
-    } catch (error) {
-      showMessage('error', `Password update failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+    showMessage('info', 'Password update is currently disabled. Please contact admin.');
   };
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      await updateProfile({ name: profileUpdate.name });
-      showMessage('success', 'Profile updated successfully!');
-      setProfileUpdate({ name: '' });
-    } catch (error) {
-      showMessage('error', `Profile update failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+    showMessage('info', 'Profile update is currently disabled. Please contact admin.');
   };
 
   const handleLogout = async () => {
     try {
       await logout();
       showMessage('success', 'Logged out successfully. See you soon!');
+      // Stay on auth page after logout
     } catch (error) {
       showMessage('error', `Logout failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -291,6 +263,8 @@ export function AuthenticationPage() {
                     Sign In
                   </button>
                 </form>
+
+
 
                 <div className="border-t pt-6">
                   <h4 className="font-medium mb-3 text-center">Forgot Password?</h4>

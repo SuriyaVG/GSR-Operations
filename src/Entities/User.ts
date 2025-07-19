@@ -66,6 +66,36 @@ export interface EnhancedUserProfile extends UserProfile {
   updated_by?: string;
 }
 
+// Profile update request interface
+export interface ProfileUpdateRequest {
+  name?: string;
+  designation?: string;
+  custom_settings?: {
+    display_name?: string;
+    title?: string;
+    department?: string;
+  };
+}
+
+// User management interface for administrative operations
+export interface UserManagementData {
+  id: string;
+  email: string;
+  name: string | null;
+  role: UserRole;
+  designation?: string;
+  active: boolean;
+  last_login?: string;
+  created_at: string;
+  updated_at: string;
+  custom_settings?: {
+    display_name?: string;
+    title?: string;
+    department?: string;
+    special_permissions?: string[];
+  };
+}
+
 // Audit log entry for tracking profile changes
 export interface AuditLogEntry {
   id: string;
@@ -536,7 +566,12 @@ function mapSupabaseUserToEnhancedUser(supabaseUser: SupabaseUser, profile: Enha
 export const User = {
   // Get current user with enhanced profile
   async me(): Promise<User> {
-    const session = await TokenManager.getValidSession();
+    // Get session without automatic refresh to prevent loops
+    const { data: { session }, error } = await supabase.auth.getSession();
+    
+    if (error) {
+      throw new Error(`Session error: ${error.message}`);
+    }
     
     if (!session?.user) {
       throw new Error('User not authenticated');
@@ -557,10 +592,12 @@ export const User = {
       throw new Error(`Login failed: ${error.message}`);
     }
 
-    if (!data.user) {
-      throw new Error('Login failed: No user returned');
+    if (!data.user || !data.session) {
+      throw new Error('Login failed: No user or session returned');
     }
 
+    // Don't create profile here - let the auth state change listener handle it
+    // The auth state change will trigger and call User.me() which will create the profile
     const profile = await UserProfileManager.getOrCreateEnhancedUserProfile(data.user);
     return mapSupabaseUserToEnhancedUser(data.user, profile);
   },
