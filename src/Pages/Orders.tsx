@@ -1,10 +1,14 @@
 import { useState, useEffect } from "react";
-import { Order, OrderItem, Customer, ProductionBatch } from "@/Entities/all";
+import { OrderService } from "@/lib/orderService";
+import CustomerService from "@/services/CustomerService";
+import { ProductionBatchService } from "@/lib/productionBatch";
 import { Button } from "@/Components/ui/button";
 import { Card, CardContent } from "@/Components/ui/card";
 import { Plus, ShoppingCart, Search, Filter, Package } from "lucide-react";
 import { Input } from "@/Components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/Components/ui/tabs";
+import { PageSkeleton } from "@/Components/ui/skeleton";
+import { toast } from '@/lib/toast';
 
 import OrderForm from "../Components/orders/OrderForm";
 import OrderList from "../Components/orders/OrderList";
@@ -12,9 +16,9 @@ import OrderSummary from "../Components/orders/OrderSummary";
 import OrderMetrics from "../Components/orders/OrderMetrics";
 
 export default function Orders() {
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [batches, setBatches] = useState<ProductionBatch[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [batches, setBatches] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -28,45 +32,34 @@ export default function Orders() {
     setIsLoading(true);
     try {
       const [ordersData, customersData, batchesData] = await Promise.all([
-        Order.list('-created_date', 50),
-        Customer.list(),
-        ProductionBatch.filter({ status: 'completed' })
+        OrderService.list('-created_at', 50),
+        CustomerService.list(),
+        ProductionBatchService.list() 
       ]);
-      
       setOrders(ordersData);
       setCustomers(customersData);
-      setBatches(batchesData);
+      
+      const sellableBatches = batchesData.filter(
+        batch => (batch.status === 'completed' || batch.status === 'approved') && batch.remaining_quantity > 0
+      );
+      setBatches(sellableBatches);
+
     } catch (error) {
       console.error("Error loading data:", error);
+      toast.error('Failed to load order data. Please try again.');
     }
     setIsLoading(false);
   };
 
   const handleSaveOrder = async (orderData: any) => {
     try {
-      const { items, ...order } = orderData;
-      
-      // Generate order number
-      const orderNumber = `GR-${new Date().getFullYear()}-${String(orders.length + 1).padStart(4, '0')}`;
-      
-      // Create order
-      const newOrder = await Order.create({
-        ...order,
-        order_number: orderNumber
-      });
-
-      // Create order items
-      for (const item of items) {
-        await OrderItem.create({
-          ...item,
-          order_id: newOrder.id
-        });
-      }
-
+      const { order, invoice } = await OrderService.createOrder(orderData);
       setShowForm(false);
       loadData();
+      
     } catch (error) {
       console.error("Error saving order:", error);
+      toast.error('Failed to create order.');
     }
   };
 
@@ -79,10 +72,19 @@ export default function Orders() {
     return matchesSearch && matchesStatus;
   });
 
+  if (isLoading) {
+    return (
+      <div className="p-6 bg-gradient-to-br from-amber-50 to-orange-50 min-h-screen">
+        <div className="max-w-7xl mx-auto">
+          <PageSkeleton variant="list" />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 space-y-6 bg-gradient-to-br from-amber-50 to-orange-50 min-h-screen">
       <div className="max-w-7xl mx-auto">
-        {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Order Management</h1>
@@ -114,7 +116,6 @@ export default function Orders() {
           </TabsList>
 
           <TabsContent value="orders" className="space-y-6">
-            {/* Search and Filter */}
             <Card className="bg-white/70 backdrop-blur-sm border-amber-200">
               <CardContent className="p-4">
                 <div className="flex flex-col md:flex-row gap-4">
@@ -164,7 +165,6 @@ export default function Orders() {
           </TabsContent>
         </Tabs>
 
-        {/* Form Modal */}
         {showForm && (
           <OrderForm
             customers={customers}

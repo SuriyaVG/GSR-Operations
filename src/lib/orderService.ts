@@ -1,8 +1,9 @@
 // src/lib/orderService.ts
-import { Order } from '@/Entities/Order';
+import { Order } from '@/Entities/all';
 import { FinancialService } from '@/lib/financial';
 import { InventoryService } from '@/lib/inventory';
 import { toast } from '@/lib/toast';
+import { supabase } from '@/lib/supabase';
 
 export interface OrderData {
   customer_id: string;
@@ -34,26 +35,78 @@ export class OrderService {
     return `ORD-${year}-${sequence.toString().padStart(4, '0')}`;
   }
 
-  // Create order with automated invoice creation
+  // Create order with automated invoice creation using atomic database function
   static async createOrder(orderData: OrderData): Promise<{ order: any; invoice: any }> {
     try {
       // Generate order number
       const orderNumber = await this.generateOrderNumber();
 
-      // Create the order
-      const order = await Order.create({
+      // Prepare order data for the database function
+      const dbOrderData = {
         customer_id: orderData.customer_id,
         order_number: orderNumber,
         order_date: orderData.order_date,
-        total_amount: orderData.net_amount, // Use net amount (including tax)
+        total_amount: orderData.net_amount.toString(), // Use net amount (including tax)
         status: orderData.status,
         payment_status: orderData.payment_status,
-        notes: orderData.notes,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        notes: orderData.notes
+      };
+
+      const { data: result, error: dbError } = await supabase.rpc('create_order_with_invoice', {
+        order_data: dbOrderData,
+        invoice_data: {}
       });
 
-      // Decrement inventory for each item
+      let order;
+      let invoice;
+
+      if (dbError) {
+        // If the RPC is missing (code PGRST202) fall back to direct table inserts
+        if (dbError.code === 'PGRST202') {
+          console.warn('create_order_with_invoice RPC not found, falling back to direct inserts.');
+
+          // Insert order
+          const { data: orderInsert, error: orderErr } = await supabase
+            .from('orders')
+            .insert({ ...dbOrderData })
+            .select()
+            .single();
+
+          if (orderErr) throw new Error(`Order insert failed: ${orderErr.message}`);
+
+          order = orderInsert;
+
+          // Insert a placeholder invoice record
+          const { data: invoiceInsert, error: invErr } = await supabase
+            .from('invoices')
+            .insert({
+              customer_id: dbOrderData.customer_id,
+              order_id: order.id,
+              invoice_number: `INV-${new Date().getFullYear()}-${Math.random().toString(36).substr(2,4)}`,
+              amount: dbOrderData.total_amount,
+              status: 'unpaid',
+              issue_date: dbOrderData.order_date
+            })
+            .select()
+            .single();
+
+          if (invErr) throw new Error(`Invoice insert failed: ${invErr.message}`);
+
+          invoice = invoiceInsert;
+        } else {
+          console.error('Database function error:', dbError);
+          throw new Error(`Failed to create order and invoice: ${dbError.message}`);
+        }
+      } else {
+        if (!result || !result.order || !result.invoice) {
+          throw new Error('Invalid response from database function');
+        }
+        order = result.order;
+        invoice = result.invoice;
+      }
+
+      // Decrement inventory for each item (after successful order/invoice creation)
+      const inventoryErrors: string[] = [];
       for (const item of orderData.items) {
         try {
           await InventoryService.decrementBatchQuantity(
@@ -64,21 +117,22 @@ export class OrderService {
           );
         } catch (error) {
           console.error(`Failed to decrement inventory for batch ${item.batch_id}:`, error);
-          // Continue with other items but log the error
-          toast.warning(`Inventory update failed for ${item.product_name}. Please check manually.`);
+          inventoryErrors.push(`${item.product_name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
       }
 
-      // Automatically create invoice
-      const invoice = await FinancialService.createInvoiceFromOrder({
-        order_id: order.id
-      });
-
-      toast.success(`Order ${orderNumber} created successfully with invoice ${invoice.invoice_number}`);
+      // Show appropriate success/warning messages
+      if (inventoryErrors.length === 0) {
+        toast.success(`Order ${orderNumber} created successfully with invoice ${invoice.invoice_number}`);
+      } else {
+        toast.success(`Order ${orderNumber} and invoice ${invoice.invoice_number} created successfully`);
+        toast.warning(`Some inventory updates failed: ${inventoryErrors.join(', ')}. Please check manually.`);
+      }
 
       return { order, invoice };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create order';
+      console.error('OrderService.createOrder error:', error);
       toast.error(message);
       throw error;
     }
@@ -248,5 +302,21 @@ export class OrderService {
         averageOrderValue: 0
       };
     }
+  }
+
+  // List orders from Supabase
+  static async list(sort = '-created_at', limit = 100) {
+    let query = supabase.from('orders').select('*');
+    if (sort) {
+      const isDesc = sort.startsWith('-');
+      const sortField = isDesc ? sort.substring(1) : sort;
+      query = query.order(sortField, { ascending: !isDesc });
+    }
+    if (limit) {
+      query = query.limit(limit);
+    }
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    return data;
   }
 }

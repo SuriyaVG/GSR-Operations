@@ -12,6 +12,8 @@ import { Label } from '@/Components/ui/label';
 import { Textarea } from '@/Components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/Components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/Components/ui/card';
+import { toast } from '@/lib/toast';
+import { z } from 'zod';
 
 export default function CustomerForm({ onSave, onCancel }) {
   const [formData, setFormData] = useState({
@@ -29,17 +31,44 @@ export default function CustomerForm({ onSave, onCancel }) {
     payment_terms: 'immediate',
     notes: ''
   });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string[]>>({});
+
+  const CustomerSchema = z.object({
+    name: z.string().min(1, 'Customer name is required'),
+    email: z.string().optional().or(z.literal('')).refine(val => !val || /.+@.+\..+/.test(val), {
+      message: 'Invalid email address',
+    }),
+  });
 
   const handleChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    onSave({
-      ...formData,
-      credit_limit: parseFloat(formData.credit_limit) || 0
-    });
+    setIsSubmitting(true);
+    setErrors({});
+    const parsed = CustomerSchema.safeParse({ name: formData.name, email: formData.email });
+    if (!parsed.success) {
+      setErrors(parsed.error.flatten().fieldErrors);
+      setIsSubmitting(false);
+      return;
+    }
+
+    try {
+      await onSave({
+        ...formData,
+        credit_limit: parseFloat(formData.credit_limit) || 0,
+      });
+      toast.success('Customer added successfully!');
+      onCancel();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to add customer';
+      toast.error(message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -63,6 +92,7 @@ export default function CustomerForm({ onSave, onCancel }) {
                   value={formData.name} 
                   onChange={(e) => handleChange('name', e.target.value)} 
                   required 
+                  error={errors.name?.[0]}
                 />
               </div>
               <div className="space-y-2">
@@ -203,14 +233,15 @@ export default function CustomerForm({ onSave, onCancel }) {
           </Card>
 
           <DialogFooter className="gap-2">
-            <Button type="button" variant="outline" onClick={onCancel}>
+            <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>
               Cancel
             </Button>
             <Button 
               type="submit" 
               className="bg-gradient-to-r from-amber-500 to-orange-500 text-white"
+              disabled={isSubmitting}
             >
-              Add Customer
+              {isSubmitting ? 'Saving...' : 'Add Customer'}
             </Button>
           </DialogFooter>
         </form>

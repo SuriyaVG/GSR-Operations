@@ -103,7 +103,7 @@ describe('ProfileSettings', () => {
     renderComponent();
     
     // Check form fields
-    expect(screen.getByLabelText(/Name/i)).toHaveValue('John Doe');
+    expect(screen.getByLabelText(/^Name/)).toHaveValue('John Doe');
     expect(screen.getByLabelText(/Designation/i)).toHaveValue('Manager');
     expect(screen.getByLabelText(/Display Name/i)).toHaveValue('Johnny');
     expect(screen.getByLabelText(/Title/i)).toHaveValue('Senior Manager');
@@ -119,22 +119,32 @@ describe('ProfileSettings', () => {
     const user = userEvent.setup();
     
     // Test name validation (required)
-    await user.clear(screen.getByLabelText(/Name/i));
+    await user.clear(screen.getByLabelText(/^Name/));
     expect(screen.getByText('Name is required')).toBeInTheDocument();
     
     // Test name validation (too short)
-    await user.type(screen.getByLabelText(/Name/i), 'A');
+    await user.type(screen.getByLabelText(/^Name/), 'A');
     expect(screen.getByText('Name must be at least 2 characters')).toBeInTheDocument();
     
     // Test name validation (invalid characters)
-    await user.clear(screen.getByLabelText(/Name/i));
-    await user.type(screen.getByLabelText(/Name/i), 'John123');
-    expect(screen.getByText('Name can only contain letters, spaces, hyphens, and apostrophes')).toBeInTheDocument();
+    await user.clear(screen.getByLabelText(/^Name/));
+    await user.type(screen.getByLabelText(/^Name/), 'John@#$');
+    expect(screen.getByText('Name can only contain letters, numbers, spaces, hyphens, and apostrophes')).toBeInTheDocument();
+    
+    // Test name validation (valid with numbers)
+    await user.clear(screen.getByLabelText(/^Name/));
+    await user.type(screen.getByLabelText(/^Name/), 'suriyavg834');
+    expect(screen.queryByText(/Name can only contain/)).not.toBeInTheDocument();
     
     // Test designation validation (invalid characters)
     await user.clear(screen.getByLabelText(/Designation/i));
+    await user.type(screen.getByLabelText(/Designation/i), 'Manager@#$');
+    expect(screen.getByText('Designation can only contain letters, numbers, spaces, hyphens, and apostrophes')).toBeInTheDocument();
+    
+    // Test designation validation (valid with numbers)
+    await user.clear(screen.getByLabelText(/Designation/i));
     await user.type(screen.getByLabelText(/Designation/i), 'Manager123');
-    expect(screen.getByText('Designation can only contain letters, spaces, hyphens, and apostrophes')).toBeInTheDocument();
+    expect(screen.queryByText(/Designation can only contain/)).not.toBeInTheDocument();
     
     // Save button should be disabled when there are validation errors
     expect(screen.getByRole('button', { name: /Save Changes/i })).toBeDisabled();
@@ -155,8 +165,8 @@ describe('ProfileSettings', () => {
     const user = userEvent.setup();
     
     // Change form values
-    await user.clear(screen.getByLabelText(/Name/i));
-    await user.type(screen.getByLabelText(/Name/i), 'New Name');
+    await user.clear(screen.getByLabelText(/^Name/));
+    await user.type(screen.getByLabelText(/^Name/), 'New Name');
     
     await user.clear(screen.getByLabelText(/Designation/i));
     await user.type(screen.getByLabelText(/Designation/i), 'New Designation');
@@ -199,8 +209,8 @@ describe('ProfileSettings', () => {
     const user = userEvent.setup();
     
     // Change form values
-    await user.clear(screen.getByLabelText(/Name/i));
-    await user.type(screen.getByLabelText(/Name/i), 'New Name');
+    await user.clear(screen.getByLabelText(/^Name/));
+    await user.type(screen.getByLabelText(/^Name/), 'New Name');
     
     // Submit form
     await user.click(screen.getByRole('button', { name: /Save Changes/i }));
@@ -221,8 +231,8 @@ describe('ProfileSettings', () => {
     const user = userEvent.setup();
     
     // Change form values
-    await user.clear(screen.getByLabelText(/Name/i));
-    await user.type(screen.getByLabelText(/Name/i), 'New Name');
+    await user.clear(screen.getByLabelText(/^Name/));
+    await user.type(screen.getByLabelText(/^Name/), 'New Name');
     
     // Submit form
     await user.click(screen.getByRole('button', { name: /Save Changes/i }));
@@ -250,8 +260,8 @@ describe('ProfileSettings', () => {
     const user = userEvent.setup();
     
     // Change form values
-    await user.clear(screen.getByLabelText(/Name/i));
-    await user.type(screen.getByLabelText(/Name/i), 'New Name');
+    await user.clear(screen.getByLabelText(/^Name/));
+    await user.type(screen.getByLabelText(/^Name/), 'New Name');
     
     // Submit form
     await user.click(screen.getByRole('button', { name: /Save Changes/i }));
@@ -273,8 +283,8 @@ describe('ProfileSettings', () => {
     const user = userEvent.setup();
     
     // Change form values to create unsaved changes
-    await user.clear(screen.getByLabelText(/Name/i));
-    await user.type(screen.getByLabelText(/Name/i), 'New Name');
+    await user.clear(screen.getByLabelText(/^Name/));
+    await user.type(screen.getByLabelText(/^Name/), 'New Name');
     
     // Click cancel button
     await user.click(screen.getByRole('button', { name: /Cancel/i }));
@@ -297,8 +307,8 @@ describe('ProfileSettings', () => {
     const user = userEvent.setup();
     
     // Change form values to create unsaved changes
-    await user.clear(screen.getByLabelText(/Name/i));
-    await user.type(screen.getByLabelText(/Name/i), 'New Name');
+    await user.clear(screen.getByLabelText(/^Name/));
+    await user.type(screen.getByLabelText(/^Name/), 'New Name');
     
     // Click cancel button
     await user.click(screen.getByRole('button', { name: /Cancel/i }));
@@ -325,8 +335,8 @@ describe('ProfileSettings', () => {
     const user = userEvent.setup();
     
     // Change form values
-    await user.clear(screen.getByLabelText(/Name/i));
-    await user.type(screen.getByLabelText(/Name/i), 'New Valid Name');
+    await user.clear(screen.getByLabelText(/^Name/));
+    await user.type(screen.getByLabelText(/^Name/), 'New Valid Name');
     
     // Save button should be enabled
     await waitFor(() => {
@@ -342,8 +352,8 @@ describe('ProfileSettings', () => {
     const user = userEvent.setup();
     
     // Change form values
-    await user.clear(screen.getByLabelText(/Name/i));
-    await user.type(screen.getByLabelText(/Name/i), 'New Name');
+    await user.clear(screen.getByLabelText(/^Name/));
+    await user.type(screen.getByLabelText(/^Name/), 'New Name');
     
     // Submit form to trigger error
     await user.click(screen.getByRole('button', { name: /Save Changes/i }));

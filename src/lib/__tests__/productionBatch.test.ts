@@ -4,6 +4,7 @@ import { ProductionBatchService, type CreateProductionBatchData, type UpdateProd
 import { InventoryService } from '../inventory';
 import { User, UserRole } from '@/Entities/User';
 import * as toastModule from '@/lib/toast';
+import { supabase } from '../supabase';
 
 // Mock the InventoryService
 vi.mock('../inventory', () => ({
@@ -11,6 +12,17 @@ vi.mock('../inventory', () => ({
     decrementBatchQuantity: vi.fn(),
     incrementBatchQuantity: vi.fn(),
     validateBatchSelection: vi.fn()
+  },
+  InventoryError: class InventoryError extends Error {
+    constructor(public type: string, message: string, public materialId: string, public quantity: number) {
+      super(message);
+      this.name = 'InventoryError';
+    }
+  },
+  InventoryErrorType: {
+    INSUFFICIENT_QUANTITY: 'INSUFFICIENT_QUANTITY',
+    TRANSACTION_FAILED: 'TRANSACTION_FAILED',
+    MATERIAL_NOT_FOUND: 'MATERIAL_NOT_FOUND'
   }
 }));
 
@@ -35,6 +47,13 @@ vi.mock('@/Entities/User', async () => {
   };
 });
 
+// Mock the Supabase client
+vi.mock('../supabase', () => ({
+  supabase: {
+    rpc: vi.fn()
+  }
+}));
+
 describe('ProductionBatchService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -55,6 +74,51 @@ describe('ProductionBatchService', () => {
       isValid: true,
       message: 'Valid selection',
       availableQuantity: 50
+    });
+
+    // Mock successful Supabase RPC calls
+    vi.mocked(supabase.rpc).mockImplementation((functionName: string, params: any) => {
+      if (functionName === 'validate_production_batch_inventory') {
+        return Promise.resolve({
+          data: {
+            is_valid: true,
+            errors: []
+          },
+          error: null
+        });
+      }
+      
+      if (functionName === 'create_production_batch_atomic') {
+        return Promise.resolve({
+          data: {
+            batch: {
+              id: `pb_${Date.now()}`,
+              batch_number: params.batch_data.batch_number,
+              production_date: params.batch_data.production_date,
+              output_litres: params.batch_data.output_litres || 0,
+              cost_per_litre: 0,
+              yield_percentage: 0,
+              status: params.batch_data.status || 'active',
+              notes: params.batch_data.notes,
+              created_by: params.batch_data.created_by,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            },
+            inputs: params.inventory_decrements.map((input: any, index: number) => ({
+              id: `bi_${index}`,
+              material_intake_id: input.material_intake_id,
+              quantity_used: input.quantity_used,
+              material_name: `Material ${index + 1}`,
+              cost_per_unit: 450,
+              total_cost: input.quantity_used * 450
+            })),
+            total_input_cost: params.inventory_decrements.reduce((sum: number, input: any) => sum + (input.quantity_used * 450), 0)
+          },
+          error: null
+        });
+      }
+      
+      return Promise.resolve({ data: null, error: null });
     });
   });
 
@@ -80,27 +144,20 @@ describe('ProductionBatchService', () => {
 
       expect(result).toBeDefined();
       expect(result.batch_number).toBe('GR-2024-TEST-001');
-      expect(result.status).toBe('draft');
+      expect(result.status).toBe('active'); // Changed from 'draft' to 'active' to match database function
       expect(result.total_input_cost).toBe(18000); // (25 + 15) * 450
 
-      // Verify inventory decrements were called
-      expect(InventoryService.decrementBatchQuantity).toHaveBeenCalledTimes(2);
-      expect(InventoryService.decrementBatchQuantity).toHaveBeenCalledWith(
-        'mil_001',
-        25,
-        result.id,
-        'production_batch',
-        expect.stringContaining('Material used in production batch'),
-        'user_1'
-      );
-      expect(InventoryService.decrementBatchQuantity).toHaveBeenCalledWith(
-        'mil_002',
-        15,
-        result.id,
-        'production_batch',
-        expect.stringContaining('Material used in production batch'),
-        'user_1'
-      );
+      // Verify database function was called instead of direct inventory calls
+      expect(supabase.rpc).toHaveBeenCalledWith('create_production_batch_atomic', {
+        batch_data: expect.objectContaining({
+          batch_number: 'GR-2024-TEST-001',
+          production_date: '2024-12-21T00:00:00Z'
+        }),
+        inventory_decrements: expect.arrayContaining([
+          { material_intake_id: 'mil_001', quantity_used: 25 },
+          { material_intake_id: 'mil_002', quantity_used: 15 }
+        ])
+      });
 
       expect(toastModule.toast.success).toHaveBeenCalledWith(
         expect.stringContaining('created successfully')
@@ -108,17 +165,34 @@ describe('ProductionBatchService', () => {
     });
 
     it('should rollback on inventory decrement failure', async () => {
-      // Mock inventory decrement failure for second material
-      vi.mocked(InventoryService.decrementBatchQuantity)
-        .mockResolvedValueOnce(undefined) // First call succeeds
-        .mockRejectedValueOnce(new Error('Insufficient quantity')); // Second call fails
+      // Mock database function failure
+      vi.mocked(supabase.rpc).mockImplementation((functionName: string) => {
+        if (functionName === 'validate_production_batch_inventory') {
+          return Promise.resolve({
+            data: {
+              is_valid: true,
+              errors: []
+            },
+            error: null
+          });
+        }
+        
+        if (functionName === 'create_production_batch_atomic') {
+          return Promise.resolve({
+            data: null,
+            error: { message: 'Insufficient inventory: material mil_001 has 10 remaining, requested 25' }
+          });
+        }
+        
+        return Promise.resolve({ data: null, error: null });
+      });
 
       await expect(
         ProductionBatchService.createProductionBatch(mockCreateData)
       ).rejects.toThrow();
 
       expect(toastModule.toast.error).toHaveBeenCalledWith(
-        expect.stringContaining('Failed to create production batch')
+        expect.stringContaining('Database operation failed')
       );
     });
 
@@ -128,10 +202,27 @@ describe('ProductionBatchService', () => {
         inputs: []
       };
 
-      const result = await ProductionBatchService.createProductionBatch(dataWithNoInputs);
+      // Mock validation failure for empty inputs
+      vi.mocked(supabase.rpc).mockImplementation((functionName: string) => {
+        if (functionName === 'validate_production_batch_inventory') {
+          return Promise.resolve({
+            data: {
+              is_valid: false,
+              errors: [{ material_intake_id: '', error: 'No inputs provided', available_quantity: 0 }]
+            },
+            error: null
+          });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
 
-      expect(result.total_input_cost).toBe(0);
-      expect(InventoryService.decrementBatchQuantity).not.toHaveBeenCalled();
+      await expect(
+        ProductionBatchService.createProductionBatch(dataWithNoInputs)
+      ).rejects.toThrow();
+
+      expect(toastModule.toast.error).toHaveBeenCalledWith(
+        expect.stringContaining('Inventory validation failed')
+      );
     });
   });
 
@@ -211,22 +302,25 @@ describe('ProductionBatchService', () => {
 
       expect(result.isValid).toBe(true);
       expect(result.errors).toHaveLength(0);
-      expect(InventoryService.validateBatchSelection).toHaveBeenCalledTimes(2);
+      expect(supabase.rpc).toHaveBeenCalledWith('validate_production_batch_inventory', {
+        inventory_decrements: inputs
+      });
     });
 
     it('should return validation errors for invalid inputs', async () => {
-      // Mock validation failure for first input
-      vi.mocked(InventoryService.validateBatchSelection)
-        .mockResolvedValueOnce({
-          isValid: false,
-          message: 'Insufficient quantity',
-          availableQuantity: 5
-        })
-        .mockResolvedValueOnce({
-          isValid: true,
-          message: 'Valid',
-          availableQuantity: 20
-        });
+      // Mock validation failure from database function
+      vi.mocked(supabase.rpc).mockResolvedValueOnce({
+        data: {
+          is_valid: false,
+          errors: [{
+            material_intake_id: 'mil_001',
+            error: 'Insufficient inventory',
+            requested_quantity: 10,
+            available_quantity: 5
+          }]
+        },
+        error: null
+      });
 
       const inputs = [
         { material_intake_id: 'mil_001', quantity_used: 10 },
@@ -239,12 +333,17 @@ describe('ProductionBatchService', () => {
       expect(result.errors).toHaveLength(1);
       expect(result.errors[0]).toEqual({
         material_intake_id: 'mil_001',
-        error: 'Insufficient quantity',
-        availableQuantity: 5
+        error: 'Insufficient inventory',
+        requested_quantity: 10,
+        available_quantity: 5
       });
     });
 
     it('should handle validation errors gracefully', async () => {
+      // Mock database function error, should fallback to individual validation
+      vi.mocked(supabase.rpc).mockRejectedValueOnce(new Error('Network error'));
+      
+      // Mock fallback validation
       vi.mocked(InventoryService.validateBatchSelection).mockRejectedValue(
         new Error('Network error')
       );

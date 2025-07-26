@@ -1,10 +1,16 @@
 import { useState, useEffect } from "react";
-import { ProductionBatch, MaterialIntakeLog, RawMaterial } from "@/Entities/all";
+import MaterialIntakeService from "@/services/MaterialIntakeService";
+import RawMaterialService from "@/services/RawMaterialService";
+import { ProductionBatchService } from '@/lib/productionBatch';
+import type { CreateProductionBatchData } from '@/lib/productionBatch';
 import { Button } from "@/Components/ui/button";
 import { Card, CardContent } from "@/Components/ui/card";
-import { Plus, Factory, BarChart3, Search, Filter } from "lucide-react";
+import { Plus, Factory, BarChart3, Search, Filter, AlertCircle } from "lucide-react";
 import { Input } from "@/Components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/Components/ui/tabs";
+import { toast } from "@/lib/toast";
+import { getBatchYieldData } from "@/lib/database-view-handler";
+import { PageSkeleton } from "@/Components/ui/skeleton";
 
 import ProductionForm from "../Components/production/ProductionForm";
 import BatchList from "../Components/production/BatchList";
@@ -12,43 +18,137 @@ import ProductionMetrics from "../Components/production/ProductionMetrics";
 import YieldAnalysis from "../Components/production/YieldAnalysis";
 
 export default function Production() {
+  console.log('Production mounted');
   const [batches, setBatches] = useState<any[]>([]);
   const [materials, setMaterials] = useState<any[]>([]);
   const [rawMaterials, setRawMaterials] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    loadData();
+    loadData(true);
   }, []);
 
-  const loadData = async () => {
-    setIsLoading(true);
+  const loadData = async (initial = false) => {
+    if (initial) {
+      setIsLoading(true);
+    } else {
+      setIsRefreshing(true);
+    }
+
     try {
-      const [batchesData, materialsData, rawMaterialsData] = await Promise.all([
-        ProductionBatch.list('-created_date', 50),
-        MaterialIntakeLog.list(),
-        RawMaterial.list()
+      console.log('Fetching batchYieldData...');
+      const batchYieldDataPromise = getBatchYieldData(undefined, 50);
+      console.log('Fetching materials...');
+      const materialsPromise = MaterialIntakeService.list();
+      console.log('Fetching rawMaterials...');
+      const rawMaterialsPromise = RawMaterialService.list();
+
+      const [batchYieldData, materialsData, rawMaterialsData] = await Promise.all([
+        batchYieldDataPromise,
+        materialsPromise,
+        rawMaterialsPromise
       ]);
+      console.log('All production data fetched.');
+      
+      const batchesData = batchYieldData.map(batch => ({
+        id: batch.batch_id,
+        batch_number: batch.batch_number,
+        production_date: batch.production_date,
+        status: batch.status,
+        output_litres: batch.output_litres,
+        remaining_quantity: batch.output_litres, 
+        total_input_cost: batch.total_input_cost,
+        cost_per_litre: batch.cost_per_litre,
+        yield_percentage: batch.yield_percentage,
+        efficiency_rating: batch.efficiency_rating,
+        material_breakdown: batch.material_breakdown
+      }));
       
       setBatches(batchesData);
       setMaterials(materialsData);
       setRawMaterials(rawMaterialsData);
     } catch (error) {
       console.error("Error loading data:", error);
+      toast.error("Failed to load production data. Please try again.");
+    } finally {
+      if (initial) {
+        setIsLoading(false);
+      } else {
+        setIsRefreshing(false);
+      }
+      console.log('Production loading set to false');
     }
-    setIsLoading(false);
   };
 
   const handleSaveBatch = async (batchData: any) => {
+    setIsSaving(true);
     try {
-      await ProductionBatch.create(batchData);
+      if (!batchData.batch_number || !batchData.production_date) {
+        toast.error("Batch number and production date are required");
+        return;
+      }
+
+      if (!batchData.inputs || !Array.isArray(batchData.inputs) || batchData.inputs.length === 0) {
+        toast.error("At least one material input is required");
+        return;
+      }
+
+      const validation = await ProductionBatchService.validateProductionBatchInputs(batchData.inputs);
+      if (!validation.isValid) {
+        const errorMessages = validation.errors.map(err => {
+          const intake = materials.find((m: any) => String(m.id) === String(err.material_intake_id));
+          const rawName = intake
+            ? rawMaterials.find((rm: any) => String(rm.id) === String(intake.raw_material_id))?.name
+            : undefined;
+          const humanName = rawName ?? `Material ${err.material_intake_id}`;
+
+          return `${humanName}: ${err.error}${err.available_quantity !== undefined ? ` (Available: ${err.available_quantity})` : ''}`;
+        });
+
+        toast.error(`Inventory validation failed:\n${errorMessages.join('\n')}`);
+        return;
+      }
+
+      const createData: CreateProductionBatchData = {
+        batch_number: batchData.batch_number,
+        production_date: batchData.production_date,
+        notes: batchData.notes,
+        inputs: batchData.inputs.map((input: any) => ({
+          material_intake_id: input.material_intake_id,
+          quantity_used: parseFloat(input.quantity_used) || 0
+        }))
+      };
+
+      const createdBatch = await ProductionBatchService.createWithInventoryDecrement(createData);
+      
+      toast.success(`Production batch ${createdBatch.batch_number} created successfully`);
       setShowForm(false);
       loadData();
+      
     } catch (error) {
       console.error("Error saving batch:", error);
+      
+      let errorMessage = "Failed to create production batch";
+      if (error instanceof Error) {
+        if (error.message.includes("Insufficient inventory")) {
+          errorMessage = "Insufficient inventory for one or more materials";
+        } else if (error.message.includes("not found")) {
+          errorMessage = "One or more materials not found";
+        } else if (error.message.includes("validation")) {
+          errorMessage = "Batch validation failed";
+        } else {
+          errorMessage = `Creation failed: ${error.message}`;
+        }
+      }
+      
+      toast.error(errorMessage);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -58,10 +158,19 @@ export default function Production() {
     return matchesSearch && matchesStatus;
   });
 
+  if (isLoading) {
+    return (
+      <div className="p-6 bg-gradient-to-br from-amber-50 to-orange-50 min-h-screen">
+        <div className="max-w-7xl mx-auto">
+          <PageSkeleton variant="list" />
+        </div>
+      </div>
+    );
+  }
+  console.log('Production main content rendered');
   return (
     <div className="p-6 space-y-6 bg-gradient-to-br from-amber-50 to-orange-50 min-h-screen">
       <div className="max-w-7xl mx-auto">
-        {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Production Management</h1>
@@ -93,7 +202,6 @@ export default function Production() {
           </TabsList>
 
           <TabsContent value="batches" className="space-y-6">
-            {/* Search and Filter */}
             <Card className="bg-white/70 backdrop-blur-sm border-amber-200">
               <CardContent className="p-4">
                 <div className="flex flex-col md:flex-row gap-4">
@@ -111,7 +219,7 @@ export default function Production() {
                     <select 
                       value={statusFilter}
                       onChange={(e) => setStatusFilter(e.target.value)}
-                      className="px-3 py-2 border border-amber-200 rounded-md focus:border-amber-400 bg-white"
+                      className="px-3 py-2 border border-amber-200 rounded-md focus:border-amber-400 focus:ring-amber-100 bg-white"
                     >
                       <option value="all">All Status</option>
                       <option value="in_progress">In Progress</option>
@@ -124,10 +232,24 @@ export default function Production() {
               </CardContent>
             </Card>
 
+            <Card className="bg-white/70 backdrop-blur-sm border-amber-200">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600" />
+                    <span className="text-sm font-medium text-amber-800">Inventory Status</span>
+                  </div>
+                  <span className="text-xs text-amber-600">
+                    Check material availability before creating batches
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+
             <BatchList 
               batches={filteredBatches}
-              loading={isLoading}
-              onRefresh={loadData}
+              loading={isRefreshing}
+              onRefresh={() => loadData(false)}
             />
           </TabsContent>
 
@@ -140,13 +262,13 @@ export default function Production() {
           </TabsContent>
         </Tabs>
 
-        {/* Form Modal */}
         {showForm && (
           <ProductionForm
             materials={materials}
             rawMaterials={rawMaterials}
             onSave={handleSaveBatch}
             onCancel={() => setShowForm(false)}
+            loading={isSaving}
           />
         )}
       </div>

@@ -1,9 +1,10 @@
 // src/lib/productionBatch.ts
-// Production batch service with automatic inventory decrementing
+// Production batch service with atomic inventory decrementing
 
 import { InventoryService, InventoryError, InventoryErrorType } from './inventory';
 import { toast } from './toast';
 import { User } from '@/Entities/User';
+import { supabase } from './supabase';
 
 // Production batch interface
 export interface ProductionBatch {
@@ -175,92 +176,120 @@ class MockProductionBatchClient {
 export class ProductionBatchService {
   private static client = new MockProductionBatchClient();
 
-  // Create a new production batch with automatic inventory decrementing
+  // Get a list of production batches with optional sorting/limit
+  static async list(sort: string = '-production_date', limit: number = 100): Promise<ProductionBatch[]> {
+    // Determine sort field and direction
+    const isDesc = sort.startsWith('-');
+    const sortField = isDesc ? sort.substring(1) : sort;
+
+    // Fallback to client mock if Supabase is not configured (e.g., in tests)
+    if (!supabase || !supabase.from) {
+      // Simple mock: return limited mock data sorted by created_at
+      const batches = (await this.client.getBatchById?.call?.(this.client) ?? []) as ProductionBatch[];
+      return batches.slice(0, limit);
+    }
+
+    const query = supabase
+      .from<ProductionBatch>('production_batches')
+      .select('*')
+      .order(sortField, { ascending: !isDesc })
+      .limit(limit);
+
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    return data as ProductionBatch[];
+  }
+
+  // Main entry point for creating production batches with atomic inventory decrement
+  static async createWithInventoryDecrement(data: CreateProductionBatchData): Promise<ProductionBatch> {
+    return this.createProductionBatch(data);
+  }
+
+  // Create a new production batch with atomic inventory decrementing
   static async createProductionBatch(data: CreateProductionBatchData): Promise<ProductionBatch> {
     const currentUser = await User.me();
-    let createdBatch: ProductionBatch | null = null;
-    let processedInputs: BatchInput[] = [];
 
     try {
-      // Calculate totals from inputs
-      let totalInputCost = 0;
-      const inputsWithCosts = [];
-
-      for (const input of data.inputs) {
-        // In a real implementation, you would fetch the cost from material_intake_log
-        const costPerUnit = 450.00; // Mock cost
-        const totalCost = input.quantity_used * costPerUnit;
-        totalInputCost += totalCost;
-
-        inputsWithCosts.push({
-          ...input,
-          cost_per_unit: costPerUnit,
-          total_cost: totalCost
-        });
-      }
-
-      // Create the production batch
-      createdBatch = await this.client.createBatch({
-        batch_number: data.batch_number,
-        production_date: data.production_date,
-        total_input_cost: totalInputCost,
-        output_litres: 0, // Will be updated when production is completed
-        cost_per_litre: 0,
-        yield_percentage: 0,
-        status: 'draft',
-        notes: data.notes,
-        created_by: currentUser.id
-      });
-
-      // Process each input and decrement inventory
-      for (const input of inputsWithCosts) {
-        try {
-          // Decrement inventory for this material
-          await InventoryService.decrementBatchQuantity(
-            input.material_intake_id,
-            input.quantity_used,
-            createdBatch.id,
-            'production_batch',
-            `Material used in production batch ${createdBatch.batch_number}`,
-            currentUser.id
-          );
-
-          // Create batch input record
-          const batchInput = await this.client.createBatchInputs([{
-            batch_id: createdBatch.id,
-            material_intake_id: input.material_intake_id,
-            quantity_used: input.quantity_used,
-            cost_per_unit: input.cost_per_unit,
-            total_cost: input.total_cost
-          }]);
-
-          processedInputs.push(...batchInput);
-        } catch (error) {
-          // If inventory decrement fails, we need to rollback
-          throw new InventoryError(
-            InventoryErrorType.TRANSACTION_FAILED,
-            `Failed to process material ${input.material_intake_id}: ${error instanceof Error ? error.message : 'Unknown error'}`,
-            input.material_intake_id,
-            input.quantity_used
-          );
-        }
-      }
-
-      toast.success(`Production batch ${createdBatch.batch_number} created successfully`);
-      return createdBatch;
-
-    } catch (error) {
-      // Rollback on failure
-      if (createdBatch) {
-        await this.rollbackProductionBatch(
-          createdBatch.id,
-          processedInputs,
-          `Creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          currentUser.id
+      // First validate inventory availability
+      const validation = await this.validateProductionBatchInputs(data.inputs);
+      if (!validation.isValid) {
+        const errorMessages = validation.errors.map(err => 
+          `${err.material_intake_id}: ${err.error}${err.availableQuantity !== undefined ? ` (Available: ${err.availableQuantity})` : ''}`
+        ).join(', ');
+        throw new InventoryError(
+          InventoryErrorType.INSUFFICIENT_QUANTITY,
+          `Inventory validation failed: ${errorMessages}`,
+          validation.errors[0]?.material_intake_id || '',
+          0
         );
       }
 
-      const message = `Failed to create production batch: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      // Prepare batch data for database function
+      const batchData = {
+        batch_number: data.batch_number,
+        production_date: data.production_date,
+        output_litres: 0, // Will be updated when production is completed
+        status: 'active',
+        quality_grade: 'A',
+        yield_percentage: 0,
+        notes: data.notes,
+        created_by: currentUser.id
+      };
+
+      // Prepare inventory decrements for database function
+      const inventoryDecrements = data.inputs.map(input => ({
+        material_intake_id: input.material_intake_id,
+        quantity_used: input.quantity_used
+      }));
+
+      // Call atomic database function
+      const { data: result, error } = await supabase.rpc('create_production_batch_atomic', {
+        batch_data: batchData,
+        inventory_decrements: inventoryDecrements
+      });
+
+      if (error) {
+        throw new Error(`Database operation failed: ${error.message}`);
+      }
+
+      if (!result || !result.batch) {
+        throw new Error('Invalid response from database function');
+      }
+
+      // Convert database result to ProductionBatch interface
+      const createdBatch: ProductionBatch = {
+        id: result.batch.id,
+        batch_number: result.batch.batch_number,
+        production_date: result.batch.production_date,
+        total_input_cost: result.total_input_cost,
+        output_litres: result.batch.output_litres,
+        cost_per_litre: result.batch.cost_per_litre,
+        yield_percentage: result.batch.yield_percentage,
+        status: result.batch.status,
+        notes: result.batch.notes,
+        created_by: result.batch.created_by || currentUser.id,
+        created_at: result.batch.created_at,
+        updated_at: result.batch.updated_at
+      };
+
+      toast.success(`Production batch ${createdBatch.batch_number} created successfully with ${result.inputs?.length || 0} materials`);
+      return createdBatch;
+
+    } catch (error) {
+      let message = 'Failed to create production batch';
+      
+      if (error instanceof InventoryError) {
+        message = error.message;
+      } else if (error instanceof Error) {
+        if (error.message.includes('Insufficient inventory')) {
+          message = `Insufficient inventory: ${error.message}`;
+        } else if (error.message.includes('not found')) {
+          message = `Material not found: ${error.message}`;
+        } else {
+          message = `${message}: ${error.message}`;
+        }
+      }
+
       toast.error(message);
       throw error;
     }
@@ -492,38 +521,68 @@ export class ProductionBatchService {
       availableQuantity?: number;
     }>;
   }> {
-    const errors: Array<{
-      material_intake_id: string;
-      error: string;
-      availableQuantity?: number;
-    }> = [];
+    try {
+      // Prepare inventory decrements for validation
+      const inventoryDecrements = inputs.map(input => ({
+        material_intake_id: input.material_intake_id,
+        quantity_used: input.quantity_used
+      }));
 
-    for (const input of inputs) {
-      try {
-        const validation = await InventoryService.validateBatchSelection(
-          input.material_intake_id,
-          input.quantity_used
-        );
+      // Call database validation function
+      const { data: result, error } = await supabase.rpc('validate_production_batch_inventory', {
+        inventory_decrements: inventoryDecrements
+      });
 
-        if (!validation.isValid) {
+      if (error) {
+        throw new Error(`Validation failed: ${error.message}`);
+      }
+
+      if (!result) {
+        throw new Error('Invalid response from validation function');
+      }
+
+      return {
+        isValid: result.is_valid,
+        errors: result.errors || []
+      };
+
+    } catch (error) {
+      // Fallback to individual validation if database function fails
+      console.warn('Database validation failed, falling back to individual validation:', error);
+      
+      const errors: Array<{
+        material_intake_id: string;
+        error: string;
+        availableQuantity?: number;
+      }> = [];
+
+      for (const input of inputs) {
+        try {
+          const validation = await InventoryService.validateBatchSelection(
+            input.material_intake_id,
+            input.quantity_used
+          );
+
+          if (!validation.isValid) {
+            errors.push({
+              material_intake_id: input.material_intake_id,
+              error: validation.message,
+              availableQuantity: validation.availableQuantity
+            });
+          }
+        } catch (validationError) {
           errors.push({
             material_intake_id: input.material_intake_id,
-            error: validation.message,
-            availableQuantity: validation.availableQuantity
+            error: `Validation failed: ${validationError instanceof Error ? validationError.message : 'Unknown error'}`
           });
         }
-      } catch (error) {
-        errors.push({
-          material_intake_id: input.material_intake_id,
-          error: `Validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-        });
       }
-    }
 
-    return {
-      isValid: errors.length === 0,
-      errors
-    };
+      return {
+        isValid: errors.length === 0,
+        errors
+      };
+    }
   }
 
   // Get comprehensive audit trail for production batch

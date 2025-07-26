@@ -1,100 +1,85 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import React, { useEffect } from "react";
-import { seedDatabase } from "./lib/seed";
-import { ToastContainer } from "./Components/ui/toast";
-import { AuthProvider, ProtectedRoute, useAuth } from "./lib/auth-simple";
-import { UserRole } from "./Entities/User";
+import React, { useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Toaster, toast as sonnerToast } from 'sonner';
+import { toast as customToast } from '@/lib/toast';
+import { ToastContainer } from '@/Components/ui/toast';
 
-// Import Layout and all Page components
-import Layout from "./Pages/Layout";
-import Dashboard from "./Pages/Dashboard";
-import MaterialIntake from "./Pages/MaterialIntake";
-import Production from "./Pages/Production";
-import Orders from "./Pages/Orders";
-import Customers from "./Pages/Customers";
-import Finance from "./Pages/Finance";
-import Admin from "./Pages/Admin";
-import Profile from "./Pages/Profile";
-import { AuthenticationPage } from "./Components/auth/AuthenticationPage";
-import { UserManagement } from "./Components/admin/UserManagement";
+import { AuthProvider, ProtectedRoute, useAuth } from './lib/auth';
+import { UserRole } from './Entities/User';
 
-// Component to handle root route redirect based on auth state
-function RootRedirect() {
-  const { user, loading } = useAuth();
-  
+// Import Pages
+import Dashboard from './Pages/Dashboard';
+import { AuthenticationPage as Login } from './Components/auth/AuthenticationPage';
+import MaterialIntake from './Pages/MaterialIntake';
+import Production from './Pages/Production';
+import Orders from './Pages/Orders';
+import Customers from './Pages/Customers';
+import Finance from './Pages/Finance';
+import Admin from './Pages/Admin';
+import Profile from './Pages/Profile';
+import NotFound from './Pages/NotFound';
+import Layout from './Pages/Layout';
+
+function AppContent() {
+  const { user, loading, error, profile } = useAuth();
+  const location = useLocation();
+
+  useEffect(() => {
+    // Dismiss toasts from both libraries when navigating to a new route
+    sonnerToast.dismiss();
+    customToast.clear();
+  }, [location.pathname]);
+
   if (loading) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-gradient-to-br from-amber-50 to-orange-50">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500"></div>
-      </div>
-    );
+    return <div className="h-screen w-screen flex items-center justify-center bg-amber-50 text-amber-800">Loading application...</div>;
+  }
+
+  if (error) {
+    return <div className="h-screen w-screen flex items-center justify-center bg-red-50 text-red-700">Error: {error.message}</div>;
   }
   
-  // Redirect based on authentication state
-  return <Navigate to={user ? "/dashboard" : "/auth"} replace />;
+  return (
+    <Routes>
+      <Route path="/auth" element={user ? <Navigate to="/" /> : <Login />} />
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <Layout profile={profile} />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Dashboard />} />
+        <Route path="dashboard" element={<Dashboard />} />
+        <Route path="material-intake" element={<MaterialIntake />} />
+        <Route path="production" element={<Production />} />
+        <Route path="orders" element={<Orders />} />
+        <Route path="customers" element={<Customers />} />
+        <Route path="finance" element={<Finance />} />
+        <Route path="profile" element={<Profile />} />
+        <Route
+          path="admin"
+          element={
+            <ProtectedRoute roles={[UserRole.ADMIN]}>
+              <Admin />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="*" element={<NotFound />} />
+      </Route>
+    </Routes>
+  );
 }
 
 export default function App() {
-  // Seed the database on initial load
-  useEffect(() => {
-    seedDatabase();
-  }, []);
-
   return (
     <AuthProvider>
       <BrowserRouter>
-        <Routes>
-          {/* Authentication page - accessible without layout */}
-          <Route path="/auth" element={<AuthenticationPage />} />
-          
-          <Route element={<Layout />}>
-            {/* Redirect root path based on auth state */}
-            <Route path="/" element={<RootRedirect />} />
-
-            {/* Define a route for each page */}
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/material-intake" element={
-              <ProtectedRoute requiredRoles={[UserRole.ADMIN, UserRole.PRODUCTION]}>
-                <MaterialIntake />
-              </ProtectedRoute>
-            } />
-            <Route path="/production" element={
-              <ProtectedRoute requiredRoles={[UserRole.ADMIN, UserRole.PRODUCTION]}>
-                <Production />
-              </ProtectedRoute>
-            } />
-            <Route path="/orders" element={
-              <ProtectedRoute requiredRoles={[UserRole.ADMIN, UserRole.SALES_MANAGER, UserRole.FINANCE, UserRole.VIEWER]}>
-                <Orders />
-              </ProtectedRoute>
-            } />
-            <Route path="/customers" element={
-              <ProtectedRoute requiredRoles={[UserRole.ADMIN, UserRole.SALES_MANAGER, UserRole.FINANCE, UserRole.VIEWER]}>
-                <Customers />
-              </ProtectedRoute>
-            } />
-            <Route path="/finance" element={
-              <ProtectedRoute requiredRoles={[UserRole.ADMIN, UserRole.FINANCE]}>
-                <Finance />
-              </ProtectedRoute>
-            } />
-            
-            {/* User profile route - accessible to all authenticated users */}
-            <Route path="/profile" element={
-              <ProtectedRoute>
-                <Profile />
-              </ProtectedRoute>
-            } />
-            
-            {/* Admin routes */}
-            <Route path="/admin" element={<Admin />}>
-              <Route path="users" element={<UserManagement />} />
-            </Route>
-          </Route>
-        </Routes>
-        
-        {/* Toast notifications container */}
+        {/* Sonner toaster for components still using sonner's toast */}
+        <Toaster position="top-right" richColors />
+        {/* Custom toast container for components using our internal toast service */}
         <ToastContainer position="top-right" />
+        <AppContent />
       </BrowserRouter>
     </AuthProvider>
   );

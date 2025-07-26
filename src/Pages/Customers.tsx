@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
-import { Customer, Order } from "@/Entities/all";
+import CustomerService from "@/services/CustomerService";
+import { OrderService } from "@/lib/orderService";
 import { Button } from "@/Components/ui/button";
 import { Card, CardContent } from "@/Components/ui/card";
 import { Users, Search, Filter, UserPlus } from "lucide-react";
 import { Input } from "@/Components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/Components/ui/tabs";
+import { toast } from '@/lib/toast';
 
 import CustomerForm from "../Components/customers/CustomerForm";
 import CustomerList from "../Components/customers/CustomerList";
@@ -12,8 +14,8 @@ import CustomerMetrics from "../Components/customers/CustomerMetrics";
 import CustomerSegments from "../Components/customers/CustomerSegments";
 
 export default function Customers() {
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -27,10 +29,9 @@ export default function Customers() {
     setIsLoading(true);
     try {
       const [customersData, ordersData] = await Promise.all([
-        Customer.list('-created_date', 100),
-        Order.list('-created_date', 200)
+        CustomerService.list('-created_at', 100),
+        OrderService.list('-created_at', 200)
       ]);
-      
       setCustomers(customersData);
       setOrders(ordersData);
     } catch (error) {
@@ -41,11 +42,14 @@ export default function Customers() {
 
   const handleSaveCustomer = async (customerData: any) => {
     try {
-      await Customer.create(customerData);
+      await CustomerService.create(customerData);
       setShowForm(false);
       loadData();
+      toast.success('Customer added successfully!');
     } catch (error) {
       console.error("Error saving customer:", error);
+      const message = error instanceof Error ? error.message : 'Failed to add customer';
+      toast.error(message);
     }
   };
 

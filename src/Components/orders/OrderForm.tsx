@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -15,9 +15,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/Components/ui/card';
 import { Alert, AlertDescription } from '@/Components/ui/alert';
 import { Badge } from '@/Components/ui/badge';
 import { format } from 'date-fns';
-import { Plus, X, AlertTriangle, CheckCircle, Info } from 'lucide-react';
+import { Plus, X, AlertTriangle, CheckCircle, Info, Edit2 } from 'lucide-react';
 import { InventoryService, type MaterialBatch, type BatchValidationResult } from '@/lib/inventory';
 import { toast } from '@/lib/toast';
+import { CreatableCombobox } from '@/components/ui/creatable-combobox';
+import { AddCustomerModal } from '@/components/ui/AddCustomerModal';
+import CustomerService from '@/services/CustomerService';
 
 interface Customer {
   id: string;
@@ -50,7 +53,7 @@ interface OrderFormProps {
   onCancel: () => void;
 }
 
-export default function OrderForm({ customers, batches, onSave, onCancel }: OrderFormProps) {
+export default function OrderForm({ customers: initialCustomers, batches, onSave, onCancel }: OrderFormProps) {
   const [formData, setFormData] = useState({
     customer_id: '',
     order_date: format(new Date(), 'yyyy-MM-dd'),
@@ -60,6 +63,14 @@ export default function OrderForm({ customers, batches, onSave, onCancel }: Orde
     discount_amount: 0,
     notes: ''
   });
+
+  // Local customers state so we can append new ones created from modal
+  const [customers, setCustomers] = useState<Customer[]>(initialCustomers);
+
+  // Keep local customers list in sync when parent prop changes (e.g., refresh)
+  useEffect(() => {
+    setCustomers(initialCustomers);
+  }, [initialCustomers]);
 
   const [orderItems, setOrderItems] = useState<OrderItem[]>([{
     batch_id: '',
@@ -74,6 +85,9 @@ export default function OrderForm({ customers, batches, onSave, onCancel }: Orde
   const [availableBatches, setAvailableBatches] = useState<Record<string, MaterialBatch[]>>({});
   const [batchValidations, setBatchValidations] = useState<Record<number, BatchValidationResult | null>>({});
   const [isValidatingBatch, setIsValidatingBatch] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+  const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
 
   // Load available batches for a material
   const loadAvailableBatches = async (materialId: string): Promise<MaterialBatch[]> => {
@@ -211,26 +225,66 @@ export default function OrderForm({ customers, batches, onSave, onCancel }: Orde
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { subtotal, tax, total } = calculateTotals();
     
-    const items = orderItems.map(item => ({
-      ...item,
-      quantity: parseFloat(item.quantity),
-      unit_price: parseFloat(item.unit_price),
-      total_price: (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0)
-    }));
+    if (isSubmitting) return; // Prevent double submission
+    
+    setIsSubmitting(true);
+    
+    try {
+      const { subtotal, tax, total } = calculateTotals();
+      
+      const items = orderItems.map(item => ({
+        ...item,
+        quantity: parseFloat(item.quantity),
+        unit_price: parseFloat(item.unit_price),
+        total_price: (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0)
+      }));
 
-    const orderData = {
-      ...formData,
-      total_amount: subtotal,
-      tax_amount: tax,
-      net_amount: total,
-      items
-    };
+      const orderData = {
+        ...formData,
+        total_amount: subtotal,
+        tax_amount: tax,
+        net_amount: total,
+        items
+      };
 
-    // Call the parent's onSave handler which should handle invoice creation
-    await onSave(orderData);
+      // Call the parent's onSave handler which uses OrderService for atomic order/invoice creation
+      await onSave(orderData);
+    } catch (error) {
+      console.error('Order submission error:', error);
+      // Error handling is done in OrderService, but we can add UI feedback here if needed
+    } finally {
+      setIsSubmitting(false);
+    }
   };
+
+  // Handler for adding a new customer
+  async function handleAddCustomer(data: Customer) {
+    const newCustomer = await CustomerService.create(data);
+    setCustomers(prev => [...prev, newCustomer]);
+    setFormData(prev => ({ ...prev, customer_id: newCustomer.id }));
+    setShowAddCustomerModal(false);
+  }
+
+  // Handler for editing a customer
+  async function handleEditCustomer(data: Customer) {
+    const updatedCustomer = await CustomerService.update(data.id, data);
+    setCustomers(prev => prev.map(c => c.id === updatedCustomer.id ? updatedCustomer : c));
+    setFormData(prev => ({ ...prev, customer_id: updatedCustomer.id }));
+    setEditCustomer(null);
+  }
+
+  // Clear validation error when customer selected
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (formData.customer_id && errors.customer_id) {
+      setErrors(prev => {
+        const newErr = { ...prev };
+        delete newErr.customer_id;
+        return newErr;
+      });
+    }
+  }, [formData.customer_id, errors.customer_id]);
 
   const { subtotal, discount, tax, total } = calculateTotals();
 
@@ -250,18 +304,34 @@ export default function OrderForm({ customers, batches, onSave, onCancel }: Orde
             <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="customer_id">Customer</Label>
-                <Select 
-                  value={formData.customer_id} 
-                  onChange={(e) => handleChange('customer_id', e.target.value)}
-                  aria-label="Customer"
-                >
-                  <option value="">Select customer</option>
-                  {customers.map((customer: Customer) => (
-                    <option key={customer.id} value={customer.id}>
-                      {customer.name} - {customer.customer_type}
-                    </option>
-                  ))}
-                </Select>
+                <div className="flex items-center gap-2">
+                  <CreatableCombobox
+                    options={customers}
+                    value={customers.find(c => c.id === formData.customer_id)}
+                    onSelect={customer => setFormData(prev => ({ ...prev, customer_id: customer.id }))}
+                    onCreate={() => setShowAddCustomerModal(true)}
+                    displayField="name"
+                    placeholder="Select or add customer..."
+                    createLabel="+ Add new customer"
+                  />
+                  {formData.customer_id && (
+                    <button
+                      type="button"
+                      className="ml-2 p-1 rounded hover:bg-amber-100"
+                      onClick={() => setEditCustomer(customers.find(c => c.id === formData.customer_id))}
+                      title="Edit customer"
+                    >
+                      <Edit2 className="w-4 h-4 text-amber-600" />
+                    </button>
+                  )}
+                </div>
+                <AddCustomerModal
+                  open={showAddCustomerModal || !!editCustomer}
+                  onClose={() => { setShowAddCustomerModal(false); setEditCustomer(null); }}
+                  onSave={editCustomer ? handleEditCustomer : handleAddCustomer}
+                  initialData={editCustomer || undefined}
+                  isEdit={!!editCustomer}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="order_date">Order Date</Label>
@@ -316,6 +386,16 @@ export default function OrderForm({ customers, batches, onSave, onCancel }: Orde
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Guidance when there are no available production batches */}
+              {batches.length === 0 && (
+                <Alert className="border-amber-200 bg-amber-50 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5" />
+                  <AlertDescription className="text-amber-800">
+                    No completed production batches with available inventory were found. Please create a production batch in the “Production” section before creating an order.
+                  </AlertDescription>
+                </Alert>
+              )}
+
               {orderItems.map((item, index) => {
                 const validation = batchValidations[index];
                 const selectedBatch = batches.find(b => b.id === item.batch_id);
@@ -341,21 +421,26 @@ export default function OrderForm({ customers, batches, onSave, onCancel }: Orde
                             </Badge>
                           )}
                         </Label>
-                        <Select 
-                          value={item.batch_id} 
-                          onChange={(e) => updateItem(index, 'batch_id', e.target.value)}
-                          className={validation && !validation.isValid ? 'border-red-300' : ''}
-                          aria-label="Batch"
-                        >
-                          <option value="">Select batch</option>
-                          {batches
-                            .filter((batch: Batch) => (batch.remaining_quantity ?? batch.output_litres ?? 0) > 0) // Filter out zero-quantity batches
-                            .map((batch: Batch) => (
-                              <option key={batch.id} value={batch.id}>
-                                {batch.batch_number} {batch.remaining_quantity || batch.output_litres}L available
-                              </option>
-                            ))}
-                        </Select>
+                        {(() => {
+                          const availableBatches = batches.filter((batch: Batch) => (batch.remaining_quantity ?? batch.output_litres ?? 0) > 0);
+                          const hasOptions = availableBatches.length > 0;
+                          return (
+                            <Select
+                              value={item.batch_id}
+                              onChange={(e) => updateItem(index, 'batch_id', e.target.value)}
+                              className={validation && !validation.isValid ? 'border-red-300' : ''}
+                              aria-label="Batch"
+                              disabled={!hasOptions}
+                            >
+                              <option value="">{hasOptions ? 'Select batch' : 'No batches available'}</option>
+                              {availableBatches.map((batch: Batch) => (
+                                <option key={batch.id} value={batch.id}>
+                                  {batch.batch_number} {batch.remaining_quantity || batch.output_litres}L available
+                                </option>
+                              ))}
+                            </Select>
+                          );
+                        })()}
                       </div>
                       <div className="space-y-2">
                         <Label>Packaging</Label>
@@ -483,15 +568,15 @@ export default function OrderForm({ customers, batches, onSave, onCancel }: Orde
           </Card>
 
           <DialogFooter className="gap-2">
-            <Button type="button" variant="outline" onClick={onCancel}>
+            <Button type="button" variant="outline" onClick={onCancel} disabled={isSubmitting}>
               Cancel
             </Button>
             <Button 
               type="submit" 
               className="bg-gradient-to-r from-amber-500 to-orange-500 text-white"
-              disabled={orderItems.length === 0 || !formData.customer_id || !hasValidBatchSelections()}
+              disabled={orderItems.length === 0 || !formData.customer_id || !hasValidBatchSelections() || isSubmitting}
             >
-              Create Order
+              {isSubmitting ? 'Creating Order & Invoice...' : 'Create Order'}
             </Button>
           </DialogFooter>
         </form>

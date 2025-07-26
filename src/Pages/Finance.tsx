@@ -1,10 +1,15 @@
 import { useState, useEffect } from "react";
-import { FinancialLedger, Order, Customer, Supplier } from "@/Entities/all";
+import FinancialLedgerService from "@/services/FinancialLedgerService";
+import { OrderService } from "@/lib/orderService";
+import CustomerService from "@/services/CustomerService";
+import SupplierService from "@/services/SupplierService";
 import { Button } from "@/Components/ui/button";
 import { Card, CardContent } from "@/Components/ui/card";
 import { Plus, CreditCard, Search, Filter, IndianRupee } from "lucide-react";
 import { Input } from "@/Components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/Components/ui/tabs";
+import { PageSkeleton } from "@/Components/ui/skeleton";
+import { toast } from '@/lib/toast';
 
 import TransactionForm from "../Components/finance/TransactionForm";
 import TransactionList from "../Components/finance/TransactionList";
@@ -12,10 +17,10 @@ import FinanceMetrics from "../Components/finance/FinanceMetrics";
 import CashFlow from "../Components/finance/CashFlow";
 
 export default function Finance() {
-  const [transactions, setTransactions] = useState<FinancialLedger[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [transactions, setTransactions] = useState<FinancialLedgerService[]>([]);
+  const [orders, setOrders] = useState<OrderService[]>([]);
+  const [customers, setCustomers] = useState<CustomerService[]>([]);
+  const [suppliers, setSuppliers] = useState<SupplierService[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -29,10 +34,10 @@ export default function Finance() {
     setIsLoading(true);
     try {
       const [transactionsData, ordersData, customersData, suppliersData] = await Promise.all([
-        FinancialLedger.list('-transaction_date', 100),
-        Order.list(),
-        Customer.list(),
-        Supplier.list()
+        FinancialLedgerService.list('-transaction_date', 100),
+        OrderService.list(),
+        CustomerService.list(),
+        SupplierService.list()
       ]);
       
       setTransactions(transactionsData);
@@ -47,11 +52,14 @@ export default function Finance() {
 
   const handleSaveTransaction = async (transactionData: any) => {
     try {
-      await FinancialLedger.create(transactionData);
+      await FinancialLedgerService.create(transactionData);
       setShowForm(false);
       loadData();
+      toast.success('Transaction recorded successfully!');
     } catch (error) {
       console.error("Error saving transaction:", error);
+      const message = error instanceof Error ? error.message : 'Failed to record transaction';
+      toast.error(message);
     }
   };
 
@@ -69,6 +77,16 @@ export default function Finance() {
     const matchesType = typeFilter === "all" || transaction.transaction_type === typeFilter;
     return matchesSearch && matchesType;
   });
+
+  if (isLoading) {
+    return (
+      <div className="p-6 bg-gradient-to-br from-amber-50 to-orange-50 min-h-screen">
+        <div className="max-w-7xl mx-auto">
+          <PageSkeleton variant="list" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 space-y-6 bg-gradient-to-br from-amber-50 to-orange-50 min-h-screen">

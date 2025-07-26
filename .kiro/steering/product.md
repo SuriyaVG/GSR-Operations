@@ -24,8 +24,10 @@ GSR Operations is a comprehensive business management system for a ghee manufact
 - **Returns processing** and credit management
 
 ### Customer Management
-- **Customer segmentation** and classification
-- **Customer metrics** and performance tracking
+- **Customer segmentation** and classification with advanced value-based categorization
+- **Customer metrics** and performance tracking with comprehensive analytics
+- **Customer activity status** tracking (active, recent, at_risk, dormant, inactive, never_ordered)
+- **Customer value segmentation** (high_value, medium_value, low_value, minimal_value, no_value)
 - **Reorder predictions** and sales forecasting
 - **Interaction logging** and relationship tracking
 
@@ -54,8 +56,14 @@ GSR Operations is a comprehensive business management system for a ghee manufact
 - **Enhanced user profiles** with custom designations, departments, and special permissions
 - **Profile management** with validation, sanitization, and history tracking
 - **Role change notifications** and subscription-based permission updates
-- **Fallback authentication** system (`auth-simple.tsx`) for simplified scenarios without enhanced features
-- **Simplified profile management** (`ProfileSettings.simple.tsx`) with basic name and display name editing
+- **Full-featured authentication** system (`auth.tsx`) as primary implementation with enhanced user profiles and special user configurations
+- **Fallback authentication** system (`auth-simple.tsx`) available for simplified scenarios without enhanced features
+- **Enhanced profile management** (`ProfileSettings.tsx`) with comprehensive user profile editing and audit trails
+- **Simplified profile management** (`ProfileSettings.simple.tsx`) with basic name and display name editing for fallback scenarios
+- **Database-level role validation** with secure PostgreSQL functions
+- **Admin protection mechanisms** preventing system lockout scenarios
+- **Performance-optimized role queries** with specialized database indexes
+- **Secure role management API** with admin-only access controls
 
 ### Real-time Capabilities
 - **Live dashboard updates** with production and financial metrics
@@ -65,7 +73,9 @@ GSR Operations is a comprehensive business management system for a ghee manufact
 
 ### Data Analytics & Reporting
 - **Production yield analysis** and cost tracking
-- **Customer segmentation** with behavioral analytics
+- **Customer segmentation** with behavioral analytics and advanced value-based categorization
+- **Customer activity tracking** with 6-tier status system (never_ordered, active, recent, at_risk, dormant, inactive)
+- **Customer value analysis** with 5-tier segmentation based on lifetime value
 - **Financial reporting** with aging and cash flow analysis
 - **Interactive charts** and data visualization
 - **Export capabilities** for external reporting
@@ -101,6 +111,11 @@ The system is designed for a **ghee manufacturing business** that:
 - **Comprehensive entity model** covering all business domains
 - **Migration system** for schema evolution
 - **Seed data** for development and testing
+- **Database-level security functions** for role management and validation
+- **Performance-optimized indexes** for user profile and role queries
+- **Admin protection mechanisms** to prevent system lockout
+- **Advanced database views** for customer analytics with comprehensive metrics and segmentation
+- **Customer metrics views** with activity tracking, value segmentation, and business intelligence
 
 ### Integration Points
 - **Supabase Auth** for user authentication and session management

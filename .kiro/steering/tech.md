@@ -20,7 +20,10 @@
 
 ## State & Data Management
 - **Supabase client** with TypeScript database types
-- **Entity-based data layer** with comprehensive TypeScript interfaces
+- **Entity-based data layer** with comprehensive TypeScript interfaces and CRUD operations
+- **Entity classes** with standardized database methods (list, find, filter, create, update, delete)
+- **Centralized entity exports** with proper separation between interfaces and implementations (`src/Entities/all.ts`)
+- **Backward-compatible type system** maintaining existing import patterns while enabling structured access
 - **Custom hooks** for data fetching and state management
 - **Role-based authorization** system with fine-grained permissions
 - **React Context** for authentication state management
@@ -43,8 +46,24 @@
 ## Database Management
 - **Migration system** with Supabase migrations
 - **Seed scripts** for development data
-- **Health check utilities** for database monitoring
+- **Health check utilities** for database monitoring and connection validation
+- **Schema verification tools** for database structure validation
+- **Database setup validation** with prerequisite checking and view fixes
+- **Schema mismatch detection** and remediation for manufacturing vs e-commerce schemas
 - **Audit logging** system for compliance and tracking
+- **Database functions** for secure role management and validation
+- **Performance indexes** for optimized user profile queries
+- **Role validation triggers** to prevent admin lockout scenarios
+- **Database view handler** with fallback calculations for resilient data access
+- **Manufacturing schema creation** scripts for production batch tracking, material intake, and supplier management
+- **Database view error handling** with graceful degradation and fallback calculations
+- **View logic correction** system for accurate batch yield and customer metrics calculations
+- **Performance-optimized database views** with proper NULL handling and division-by-zero protection
+- **Table creation utilities** for core business entities (orders, order_items) with relationship validation
+- **Table structure validation** scripts for ensuring proper database schema integrity
+- **Schema repair utilities** for creating missing core tables with proper enums, constraints, and indexes
+- **Database view creation utilities** for customer analytics and business intelligence (`create-missing-views.sql`)
+- **Customer metrics views** with advanced segmentation, activity tracking, and value analysis
 
 ## Common Commands
 
@@ -67,7 +86,25 @@ npm run db:migrate   # Run database migrations
 npm run db:seed      # Seed development data
 npm run db:verify    # Verify database connection
 npm run db:health    # Check database health
+npm run db:schema    # Check database schema and structure
 npm run db:reset     # Reset database (development)
+
+# Database Setup & Validation
+node scripts/setup-database-first.js    # Validate database setup and provide view fixes
+node scripts/migrate-supabase.js        # Run Supabase migrations
+node scripts/supabase-setup-manual.js   # Manual Supabase setup
+node scripts/check-database-schema.js   # Check for schema mismatches between expected and actual database structure
+node scripts/test-view-logic.js         # Test database view calculations and logic
+node scripts/test-view-error-handling.js # Test view error handling and fallback mechanisms
+node scripts/apply-view-fixes.js        # Apply database view corrections and optimizations
+node scripts/create-orders-table.cjs    # Create orders and order_items tables with proper relationships
+node scripts/check-orders-table.cjs     # Validate orders table structure and accessibility
+
+# Database Schema Repair
+psql -f scripts/fix-missing-orders-table.sql  # Create missing orders and order_items tables with enums and indexes
+
+# Database View Management
+psql -f scripts/create-missing-views.sql  # Create comprehensive customer metrics views with advanced analytics
 ```
 
 ## Build Configuration

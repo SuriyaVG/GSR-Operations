@@ -5,7 +5,7 @@ import { Badge } from '@/Components/ui/badge';
 import { Button } from '@/Components/ui/button';
 import { Skeleton } from '@/Components/ui/skeleton';
 import { format } from 'date-fns';
-import { Eye, MoreHorizontal, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
+import { Eye, MoreHorizontal, CheckCircle, Clock, AlertTriangle, RefreshCw } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,8 +56,15 @@ export default function BatchList({ batches, loading, onRefresh }) {
       <CardHeader>
         <div className="flex justify-between items-center">
           <CardTitle className="text-xl font-bold text-gray-900">Production Batches</CardTitle>
-          <Button variant="outline" size="sm" onClick={onRefresh}>
-            Refresh
+          <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
+            {loading ? (
+              <div className="flex items-center gap-1">
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                Refreshing...
+              </div>
+            ) : (
+              'Refresh'
+            )}
           </Button>
         </div>
       </CardHeader>
